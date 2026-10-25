@@ -1,0 +1,110 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!21 &2100000
+Material:
+  serializedVersion: 8
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: Water_URP_Unity6
+  m_Shader: {fileID: 4800000, guid: 9560d353b85e16d4b8d99f19e5ef8961, type: 3}
+  m_Parent: {fileID: 0}
+  m_ModifiedSerializedProperties: 0
+  m_ValidKeywords: []
+  m_InvalidKeywords:
+  - _ISFOAM_ON
+  - _ISMASK_ON
+  m_LightmapFlags: 4
+  m_EnableInstancingVariants: 0
+  m_DoubleSidedGI: 0
+  m_CustomRenderQueue: -1
+  stringTagMap: {}
+  disabledShaderPasses: []
+  m_LockedProperties: 
+  m_SavedProperties:
+    serializedVersion: 3
+    m_TexEnvs:
+    - _Caustics_Map:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _MaskCaustics:
+        m_Texture: {fileID: 2800000, guid: ab9b0c8711adbd04082fc641a5ff37ea, type: 3}
+        m_Scale: {x: 0.5, y: 0.5}
+        m_Offset: {x: 0.1, y: -0.1}
+    - _MaskFoam:
+        m_Texture: {fileID: 2800000, guid: 2f294601278f14b42a201ef72afe8e9c, type: 3}
+        m_Scale: {x: 0.03, y: 0.025}
+        m_Offset: {x: -0.02, y: -0.02}
+    - _MaskSurface:
+        m_Texture: {fileID: 2800000, guid: 5e7ade402496dfa49a6a4df389fd3158, type: 3}
+        m_Scale: {x: 0.1, y: 0.1}
+        m_Offset: {x: 0.01, y: 0.02}
+    - _NormalMap:
+        m_Texture: {fileID: 2800000, guid: c7d3c588aba675f4ba00ac7cd2a3bcbc, type: 3}
+        m_Scale: {x: 0.08, y: 0.08}
+        m_Offset: {x: 0.05, y: 0.05}
+    - _Normal_Map:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    - _WaterTexture:
+        m_Texture: {fileID: 0}
+        m_Scale: {x: 1, y: 1}
+        m_Offset: {x: 0, y: 0}
+    m_Ints: []
+    m_Floats:
+    - _AmbientFresnel: 6
+    - _AngleOffset: 10
+    - _BUILTIN_QueueControl: -1
+    - _BUILTIN_QueueOffset: 0
+    - _CausticsAmount: 1
+    - _Caustics_Enabled: 1
+    - _Caustics_Opacity: 1
+    - _Caustics_Scale: 0.05
+    - _CellDensity: 10
+    - _Depth: 3.1
+    - _Depth_Strength: 0.15
+    - _Distortion_Scale: 500
+    - _Distortion_Speed: 0.0001
+    - _FoamAmount: 0.65
+    - _FoamCutoff: 0.07
+    - _Foam_Enabled: 1
+    - _Foam_Noise_Amplitude: 0.2
+    - _Foam_Noise_Scale: 200
+    - _Foam_Size: 0
+    - _Foam_Speed: 0.01
+    - _IsCaustics: 0
+    - _IsFoam: 1
+    - _IsMask: 1
+    - _Mettalic: 0
+    - _NormalStrength: 0.5
+    - _Normal_Strength: 0.3
+    - _Refraction: 0.01
+    - _Refraction_Enabled: 0
+    - _Refraction_Strength: 0.147
+    - _Smoothness: 0.017
+    - _SurfaceOpacity: 1
+    - _VoronoiDensity: 9
+    - _VoronoiLevel: 0
+    - _VoronoiOffset: 2
+    - _VoronoiPower: 2
+    - _Water_Texture_Opacity: 1
+    - _WaveSize: 0.3
+    - _WaveSize2: 0.15
+    m_Colors:
+    - _ColorAmbient: {r: 0.46169454, g: 0.8172087, b: 0.9339623, a: 1}
+    - _ColorDeep: {r: 0.1381274, g: 0.4551066, b: 0.754717, a: 1}
+    - _ColorFoam: {r: 0.86536133, g: 0.9716981, b: 0.9598829, a: 1}
+    - _ColorShallow: {r: 0.31318972, g: 0.66732496, b: 0.8018868, a: 1}
+    - _ColorSurface: {r: 0.4132787, g: 0.7937468, b: 0.8867924, a: 1}
+    - _Deep_Color: {r: 0, g: 0, b: 0, a: 0}
+    - _Surface_Color: {r: 0, g: 0, b: 0, a: 0}
+    - _VoronoiST: {r: 0.05, g: 0.05, b: 0.05, a: 0.05}
+    - _VoronoiSpeed: {r: 1, g: 1, b: 1, a: 1}
+    - _Water_Texture_Movement: {r: 0, g: 0, b: 0, a: 0}
+    - _WaveSpeed: {r: 0, g: 0, b: 0, a: 0}
+    - _WaveSpeed2: {r: 0, g: 0, b: 0, a: 0}
+  m_BuildTextureStacks: []
+  m_AllowLocking: 1

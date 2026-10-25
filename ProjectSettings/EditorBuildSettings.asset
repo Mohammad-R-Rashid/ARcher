@@ -1,0 +1,14 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1045 &1
+EditorBuildSettings:
+  m_ObjectHideFlags: 0
+  serializedVersion: 2
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Siege/Scenes/Main.unity
+    guid: 19c59eedb130d428c92898e29255f60c
+  m_configObjects:
+    UnityEditor.XR.ARKit.ARKitSettings: {fileID: 11400000, guid: 07706264253a64c52964f9b22a867cfa, type: 2}
+    com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: cfbe54e67d6c34976b594124d7ca536c, type: 2}
+    com.unity.xr.management.loader_settings: {fileID: 11400000, guid: 19b62770d3f944d7ba4a4de5b4fa12c6, type: 2}
