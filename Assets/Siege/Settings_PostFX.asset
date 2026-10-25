@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!114 &-6719730551473735456
+--- !u!114 &-4897128273863583460
 MonoBehaviour:
   m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}
@@ -16,7 +16,7 @@ MonoBehaviour:
   intensity:
     m_OverrideState: 1
     m_Value: 0
---- !u!114 &-5649044059491432713
+--- !u!114 &-3573124061377026651
 MonoBehaviour:
   m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}
@@ -79,10 +79,10 @@ MonoBehaviour:
   m_Name: Settings_PostFX
   m_EditorClassIdentifier: Unity.RenderPipelines.Core.Runtime::UnityEngine.Rendering.VolumeProfile
   components:
-  - {fileID: -5649044059491432713}
-  - {fileID: 3669723176656455071}
-  - {fileID: -6719730551473735456}
---- !u!114 &3669723176656455071
+  - {fileID: -3573124061377026651}
+  - {fileID: 9215373804921763779}
+  - {fileID: -4897128273863583460}
+--- !u!114 &9215373804921763779
 MonoBehaviour:
   m_ObjectHideFlags: 3
   m_CorrespondingSourceObject: {fileID: 0}

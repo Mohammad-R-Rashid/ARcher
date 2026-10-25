@@ -39,6 +39,10 @@ namespace Siege
     // Gameplay tuning in one place. 1 unit = 1 game metre (the XR origin is scaled by GameManager.unitsPerMeter).
     public static class Tune
     {
+        // Demo mode: the gate and keep take a pounding (smoke, fire, shudders) but never fall, so a demo always
+        // ends in victory. Everything else - walls, towers, the town - can still be smashed.
+        public const bool DemoNoLoss = true;
+
         public const float Gravity = 13f;               // m/s^2, a touch heavier than Earth for game feel
 
         public const float ArrowMinSpeed = 22f;         // game m/s: fast and flat enough to read as an arrow at room scale
@@ -51,9 +55,9 @@ namespace Siege
 
         public const float FireballFlightTime = 2.7f;
         public const float FireballRadius = 4.6f;
-        public const float CatapultReload = 2.4f;
+        public const float CatapultReload = 1.7f;
         public const float CatapultAim = 0.9f;
-        public const float CatapultCooldown = 0.8f;
+        public const float CatapultCooldown = 0.45f;
         public const int NearMissEvery = 4;
         public const float MissChance = 0.12f;
 

@@ -49,6 +49,7 @@ namespace Siege
             if (!Alive || hit.source == HitSource.Arrow) return;
             float before = Health;
             Health = Mathf.Max(0f, Health - hit.damage);
+            if (Tune.DemoNoLoss && (kind == PieceKind.Keep || kind == PieceKind.Gate)) Health = Mathf.Max(Health, maxHealth * 0.12f);
             float frac = Health / maxHealth;
             var top = WorldBounds.center + Vector3.up * WorldBounds.extents.y * 0.75f;
 

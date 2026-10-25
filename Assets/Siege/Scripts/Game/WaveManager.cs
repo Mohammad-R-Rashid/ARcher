@@ -163,7 +163,7 @@ namespace Siege
             if (!m_Castle) { Stop(); return; }   // the round was torn down under us
             m_Alive.RemoveAll(s => !s || !s.Alive);
             m_Spawned.RemoveAll(s => !s);
-            if (!Breached && ((m_Gate && !m_Gate.Alive) || Infiltrated >= breachInfiltrators)) Breach();
+            if (!Tune.DemoNoLoss && !Breached && ((m_Gate && !m_Gate.Alive) || Infiltrated >= breachInfiltrators)) Breach();
         }
 
         void Breach()
@@ -466,8 +466,8 @@ namespace Siege
         IEnumerator SpawnWave(int w)
         {
             // Wave 1 is a quick two-man probe; then the raid escalates fast.
-            int foot = WaveCount == 1 ? 18 : w == 1 ? 2 : w == 2 ? 8 : 12 + (w - 3) * 3;
-            int ladders = WaveCount == 1 ? 2 : w == 1 ? 0 : w == 2 ? 1 : 2;
+            int foot = WaveCount == 1 ? 30 : w == 1 ? 2 : w == 2 ? 8 : 12 + (w - 3) * 3;
+            int ladders = WaveCount == 1 ? 4 : w == 1 ? 0 : w == 2 ? 1 : 2;
             bool ram = w >= 2 || WaveCount == 1;
             var plan = new List<int>();
             int vanguard = Mathf.CeilToInt(foot * 0.45f);
