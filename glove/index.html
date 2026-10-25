@@ -175,6 +175,13 @@ function handle(m) {
   const p = m.p, s = players[p];
   if (!s) { if (m.t === 'reset') resetDuel(false); else if (m.t === 'round_start') startRound(false); return; }
   if (m.src === 'usb' || m.src === 'wifi') { s.lastSeen = performance.now(); s.src = m.src; }
+  // Gloves send release/cancel and command replies several times over UDP; act on the first copy only.
+  const key = m.t === 'release' || m.t === 'cancel' ? m.shot : m.id;
+  if (key != null && (m.t === 'release' || m.t === 'cancel' || m.t === 'zero' || m.t === 'calib' || m.t === 'pong')) {
+    s.seen = s.seen || {};
+    if (s.seen[m.t] === key) return;
+    s.seen[m.t] = key;
+  }
   switch (m.t) {
     case 'hb':
       s.bend = m.bend ?? s.bend; s.gloveState = (m.state || '—').toUpperCase();
@@ -188,7 +195,9 @@ function handle(m) {
       break;
     case 'cancel': s.drawing = false; s.power = 0; log(`P${p} cancel (fist too short)`); break;
     case 'calib': log(`P${p} calibrated: open=${m.open} fist=${m.fist}`, true); showCue(p, 'calibrated ✓', 1500); break;
-    case 'zero': log(`P${p} aim recentered (offset pitch ${m.pitch0}°, roll ${m.roll0}°)`, true); showCue(p, 'recentered ✓', 1500); break;
+    case 'zero':
+      if (m.ok === false) { log(`P${p} recenter failed (no IMU?)`, true); showCue(p, 'recenter failed', 1500); break; }
+      log(`P${p} aim recentered (offset pitch ${m.pitch0}°, roll ${m.roll0}°)`, true); showCue(p, 'recentered ✓', 1500); break;
     case 'log': log(`P${p} glove: ${m.msg}`); cueFromLog(p, m.msg || ''); break;
     case 'pong': log(`P${p} pong`); break;
   }

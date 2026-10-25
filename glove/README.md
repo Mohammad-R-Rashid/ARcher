@@ -157,14 +157,18 @@ Glove → server → everyone (`p` = player 1|2, `src` = "usb" | "wifi" | "sim")
 
 | `t` | Fields | When |
 |---|---|---|
-| `draw_start` | | Fist closed (bow drawn) |
-| `draw` | `power` 0–1, `pitch` | Every 50 ms while drawing (animate the bowstring, preview the arc; pitch as in `release`) |
-| `release` | `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
-| `cancel` | | Draw too weak to shoot: power under 0.3 (fist held < 0.36 s) |
-| `hb` | `bend` 0–1, `state`, `pitch`, `roll`, `imu` | 4×/s heartbeat |
-| `calib` | `open`, `fist` | Calibration done |
-| `zero` | `pitch0`, `roll0` | Aim zeroed (offset now subtracted from every pitch/roll) |
+| `draw_start` | `shot`* | Fist closed (bow drawn) |
+| `draw` | `shot`*, `power` 0–1, `pitch` | Every 50 ms while drawing (animate the bowstring, preview the arc; pitch as in `release`) |
+| `release` | `shot`*, `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
+| `cancel` | `shot`* | Draw too weak to shoot: power under 0.3 (fist held < 0.36 s) |
+| `hb` | `bend` 0–1, `state`, `shot`*, `pitch`, `roll`, `imu` | 4×/s heartbeat |
+| `calib` | `open`, `fist`, `id`* | Calibration done |
+| `zero` | `ok`*, `pitch0`, `roll0`, `id`* | Aim zeroed (offset now subtracted from every pitch/roll); `ok:false` = couldn't |
 | `log` | `msg` | Human-readable status |
+
+\* Arduino firmware only. Over UDP it sends `release`, `cancel`, `zero`, `calib` and `pong` 3 times; receivers
+dedupe by `shot` / `id`. Commands may carry an `id` (`{"t":"cmd","cmd":"zero","id":7}`) so a retry isn't run
+twice. Details: `HANDOFF.md` → "Lost packets".
 
 Phone/page → server:
 - `{"t":"cmd","p":1,"cmd":"cal"}` → recalibrates glove 1; `"zero"` → hold the aiming pose still for ~4 s and it becomes pitch 0 / roll 0 (also `"ping"`)
