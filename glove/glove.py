@@ -703,7 +703,9 @@ def main():
                 else:
                     send("cancel")
             elif time.ticks_diff(now, last_draw_msg) >= DRAW_MSG_MS:
-                send("draw", power=round(power, 2))
+                # same lookback as release, so the app's arc preview shows exactly the shot it would get
+                pitch, _ = tilt(RELEASE_LOOKBACK_MS)
+                send("draw", power=round(power, 2), pitch=pitch)
                 last_draw_msg = now
 
         if time.ticks_diff(now, last_hb) >= HB_MS:
