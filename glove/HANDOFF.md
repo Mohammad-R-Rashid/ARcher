@@ -19,7 +19,7 @@ hotspot's router address) on port **9000**. Listen on that port; no address need
 |---|---|---|
 | `release` | `power` 0–1, `pitch`, `roll` (deg, may be null), `held_ms` | **Fire the arrow.** Power = arrow speed |
 | `draw_start` | | Start the bow-draw animation |
-| `draw` | `power` 0–1 (every 50 ms) | Animate the string being pulled |
+| `draw` | `power` 0–1, `pitch` (deg, may be null), every 50 ms | Animate the string; preview the arc (`pitch` uses the same 100 ms lookback as `release`, so the preview matches the shot) |
 | `cancel` | | Fist was too short: stop the draw animation, no arrow |
 | `hb` | `bend`, `state`, `pitch`, `roll`, `imu` (4×/s) | Glove is alive (show "connected") |
 | `zero` | `pitch0`, `roll0` | Recenter finished |

@@ -158,7 +158,7 @@ Glove → server → everyone (`p` = player 1|2, `src` = "usb" | "wifi" | "sim")
 | `t` | Fields | When |
 |---|---|---|
 | `draw_start` | | Fist closed (bow drawn) |
-| `draw` | `power` 0–1 | Every 50 ms while drawing (animate the bowstring) |
+| `draw` | `power` 0–1, `pitch` | Every 50 ms while drawing (animate the bowstring, preview the arc; pitch as in `release`) |
 | `release` | `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
 | `cancel` | | Fist shorter than 150 ms (noise) |
 | `hb` | `bend` 0–1, `state`, `pitch`, `roll`, `imu` | 4×/s heartbeat |

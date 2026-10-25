@@ -575,7 +575,11 @@ void loop() {
         emit("cancel");
       }
     } else if (now - lastDrawMsg >= DRAW_MSG_MS) {
-      emit("draw", "\"power\":%.2f", power);
+      // same lookback as release, so the app's arc preview shows exactly the shot it would get
+      float p, r;
+      bool ok = tiltAgo(RELEASE_LOOKBACK_MS, p, r);
+      char ps[12];
+      emit("draw", "\"power\":%.2f,\"pitch\":%s", power, angle(ps, ok, p));
       lastDrawMsg = now;
     }
   }

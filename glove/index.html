@@ -180,7 +180,7 @@ function handle(m) {
       s.bend = m.bend ?? s.bend; s.gloveState = (m.state || '—').toUpperCase();
       s.pitch = m.pitch ?? null; s.roll = m.roll ?? null; s.imu = !!m.imu; break;
     case 'draw_start': s.drawing = true; s.power = 0; log(`P${p} draw_start`, true); break;
-    case 'draw': s.drawing = true; s.power = m.power ?? s.power; break;
+    case 'draw': s.drawing = true; s.power = m.power ?? s.power; if (m.pitch != null) s.pitch = m.pitch; break;
     case 'release':
       s.drawing = false; s.power = 0;
       fire(p, m.power ?? 0.5, m.pitch);
