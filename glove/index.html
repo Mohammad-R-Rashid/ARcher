@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bow Glove Test Bench</title>
+<style>
+  :root {
+    --bg: #12141a; --panel: #1b1e27; --line: #2c3040; --text: #e6e8ee; --muted: #8a90a2;
+    --p1: #4aa3ff; --p2: #ff6b5a; --ok: #3ccf7a; --warn: #f2b33d;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  .pill { padding: 2px 10px; border-radius: 999px; font-size: 12px; background: var(--line); color: var(--muted); }
+  .pill.ok { background: rgba(60,207,122,.15); color: var(--ok); }
+  .pill.bad { background: rgba(255,107,90,.15); color: var(--p2); }
+  header .spacer { flex: 1; }
+  button { background: var(--line); color: var(--text); border: 1px solid #3a3f52; border-radius: 8px; padding: 7px 12px; font: inherit; cursor: pointer; }
+  button:hover { background: #363b4e; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 16px; }
+  canvas { width: 100%; height: auto; display: block; border-radius: 12px; background: #1d2433; touch-action: none; }
+  .players { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 700px) { .players { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; display: grid; gap: 10px; }
+  .card h2 { margin: 0; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .row { display: grid; grid-template-columns: 90px 1fr 52px; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; }
+  .row b { color: var(--text); font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { height: 10px; background: #262a37; border-radius: 6px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; border-radius: 6px; transition: width .05s linear; }
+  .p1 .bar > i { background: var(--p1); } .p2 .bar > i { background: var(--p2); }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+  .draw-btn { flex: 1; min-width: 160px; padding: 12px; font-weight: 600; user-select: none; -webkit-user-select: none; }
+  .p1 .draw-btn { border-color: var(--p1); } .p2 .draw-btn { border-color: var(--p2); }
+  .draw-btn.active { background: #2d3550; }
+  input[type=range] { width: 100%; }
+  #log { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; height: 170px; overflow: auto; font: 12px/1.5 ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre-wrap; }
+  #log .ev { color: var(--text); }
+  .hint { color: var(--muted); font-size: 12px; margin: 0; }
+  kbd { background: var(--line); border-radius: 4px; padding: 0 5px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏹 Bow Glove Test Bench</h1>
+  <span id="ws" class="pill bad">server: offline</span>
+  <span class="spacer"></span>
+  <button id="round">Start round</button>
+  <button id="reset">Reset duel</button>
+</header>
+
+<main>
+  <canvas id="game" width="960" height="420"></canvas>
+  <p class="hint">Real gloves drive the archers automatically. No glove? Hold the <b>Draw</b> button (or <kbd>A</kbd> for P1, <kbd>L</kbd> for P2) and let go to shoot. Without an IMU, the angle slider sets the arrow's elevation.</p>
+
+  <section class="players">
+    <div class="card p1" id="card1"></div>
+    <div class="card p2" id="card2"></div>
+  </section>
+
+  <div id="log"></div>
+</main>
+
+<script>
+// ------------------------------------------------------------------ state
+const COLORS = { 1: getComputedStyle(document.documentElement).getPropertyValue('--p1').trim(),
+                 2: getComputedStyle(document.documentElement).getPropertyValue('--p2').trim() };
+const W = 960, H = 420, GROUND = 360, GRAVITY = 520;
+const players = {
+  1: { x: 110, dir: 1 },
+  2: { x: W - 110, dir: -1 },
+};
+for (const p of [1, 2]) Object.assign(players[p], {
+  hp: 100, drawing: false, power: 0, bend: 0, gloveState: '—', pitch: null, imu: false,
+  lastSeen: 0, src: '', angle: 35, flash: 0,
+});
+let arrows = [];
+let winner = null;
+
+// ------------------------------------------------------------------ UI cards
+function buildCard(p) {
+  const el = document.getElementById('card' + p);
+  el.innerHTML = `
+    <h2><span class="dot" style="background:${COLORS[p]}"></span>Player ${p}
+        <span class="pill" id="glove${p}">glove: offline</span></h2>
+    <div class="row">Flex bend<div class="bar"><i id="bend${p}"></i></div><b id="bendv${p}">0.00</b></div>
+    <div class="row">Draw power<div class="bar"><i id="pow${p}"></i></div><b id="powv${p}">0.00</b></div>
+    <div class="row">Hand<span></span><b id="state${p}">—</b></div>
+    <div class="row">IMU pitch<span></span><b id="pitch${p}">—</b></div>
+    <div class="row">Angle<input type="range" min="0" max="75" value="35" id="ang${p}"><b id="angv${p}">35°</b></div>
+    <div class="controls">
+      <button class="draw-btn" id="drawbtn${p}">Hold to draw (P${p})</button>
+      <button id="cal${p}">Recalibrate flex</button>
+      <button id="zero${p}">Recenter</button>
+    </div>`;
+  const ang = el.querySelector('#ang' + p);
+  ang.oninput = () => { players[p].angle = +ang.value; el.querySelector('#angv' + p).textContent = ang.value + '°'; };
+  const btn = el.querySelector('#drawbtn' + p);
+  btn.addEventListener('pointerdown', e => { e.preventDefault(); btn.setPointerCapture(e.pointerId); simStart(p); });
+  btn.addEventListener('pointerup', () => simEnd(p));
+  btn.addEventListener('pointercancel', () => simEnd(p));
+  // Flex calibration overwrites the saved open/fist values, so only on purpose. Recenter/Start round touch only the angle.
+  el.querySelector('#cal' + p).onclick = () => {
+    if (confirm(`Recalibrate player ${p}'s flex sensor? This replaces the saved open/fist values.\n\nLED solid = keep it straight, LED blinking = bend it.`))
+      send({ t: 'cmd', p, cmd: 'cal' });
+  };
+  el.querySelector('#zero' + p).onclick = () => send({ t: 'cmd', p, cmd: 'zero' });
+}
+buildCard(1); buildCard(2);
+
+function updateCard(p) {
+  const s = players[p];
+  const $ = id => document.getElementById(id + p);
+  $('bend').style.width = (s.bend * 100) + '%';
+  $('bendv').textContent = s.bend.toFixed(2);
+  $('pow').style.width = (s.power * 100) + '%';
+  $('powv').textContent = s.power.toFixed(2);
+  $('state').textContent = s.drawing ? 'DRAWING' : s.gloveState;
+  $('pitch').textContent = s.pitch == null ? (s.imu ? '…' : 'no IMU')
+    : s.pitch.toFixed(1) + '°' + (s.roll == null ? '' : '  (roll ' + s.roll.toFixed(1) + '°)');
+  const online = performance.now() - s.lastSeen < 1500;
+  const pill = $('glove');
+  pill.textContent = online ? `glove: online (${s.src})` : 'glove: offline';
+  pill.className = 'pill ' + (online ? 'ok' : '');
+  $('drawbtn').classList.toggle('active', !!sim[p]);
+}
+
+// ------------------------------------------------------------------ log
+const logEl = document.getElementById('log');
+function log(text, ev = false) {
+  const line = document.createElement('div');
+  if (ev) line.className = 'ev';
+  line.textContent = new Date().toLocaleTimeString() + '  ' + text;
+  logEl.prepend(line);
+  while (logEl.children.length > 200) logEl.lastChild.remove();
+}
+
+// ------------------------------------------------------------------ server connection
+let ws = null;
+function connect() {
+  const pill = document.getElementById('ws');
+  try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); }
+  catch { ws = null; pill.textContent = 'server: offline (local sim only)'; return; }
+  ws.onopen = () => { pill.textContent = 'server: connected'; pill.className = 'pill ok'; log('connected to server'); };
+  ws.onclose = () => { pill.textContent = 'server: offline'; pill.className = 'pill bad'; setTimeout(connect, 1500); };
+  ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
+}
+function send(msg) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
+  else if (msg.t !== 'cmd') handle(msg);        // offline: run the simulator locally
+}
+connect();
+
+// ------------------------------------------------------------------ protocol
+function handle(m) {
+  const p = m.p, s = players[p];
+  if (!s) { if (m.t === 'reset') resetDuel(false); else if (m.t === 'round_start') startRound(false); return; }
+  if (m.src === 'usb' || m.src === 'wifi') { s.lastSeen = performance.now(); s.src = m.src; }
+  switch (m.t) {
+    case 'hb':
+      s.bend = m.bend ?? s.bend; s.gloveState = (m.state || '—').toUpperCase();
+      s.pitch = m.pitch ?? null; s.roll = m.roll ?? null; s.imu = !!m.imu; break;
+    case 'draw_start': s.drawing = true; s.power = 0; log(`P${p} draw_start`, true); break;
+    case 'draw': s.drawing = true; s.power = m.power ?? s.power; break;
+    case 'release':
+      s.drawing = false; s.power = 0;
+      fire(p, m.power ?? 0.5, m.pitch);
+      log(`P${p} RELEASE power=${(m.power ?? 0).toFixed(2)} pitch=${m.pitch ?? '—'} held=${m.held_ms ?? '—'}ms [${m.src || 'local'}]`, true);
+      break;
+    case 'cancel': s.drawing = false; s.power = 0; log(`P${p} cancel (fist too short)`); break;
+    case 'calib': log(`P${p} calibrated: open=${m.open} fist=${m.fist}`, true); showCue(p, 'calibrated ✓', 1500); break;
+    case 'zero': log(`P${p} aim recentered (offset pitch ${m.pitch0}°, roll ${m.roll0}°)`, true); showCue(p, 'recentered ✓', 1500); break;
+    case 'log': log(`P${p} glove: ${m.msg}`); cueFromLog(p, m.msg || ''); break;
+    case 'pong': log(`P${p} pong`); break;
+  }
+}
+
+// ------------------------------------------------------------------ on-screen prompts (the XIAO has no LED)
+let cue = null;   // { p, text, until }
+function showCue(p, text, ms) { cue = { p, text, until: performance.now() + ms }; }
+function cueFromLog(p, msg) {
+  if (msg.startsWith('CALIBRATE: hold hand OPEN')) showCue(p, 'keep the flex STRAIGHT', 3200);
+  else if (msg.startsWith('CALIBRATE: make a FIST')) showCue(p, 'BEND IT and hold', 3200);
+  else if (msg.startsWith('Calibration failed')) showCue(p, 'not enough bend: again…', 1500);
+  else if (msg.startsWith('ZERO AIM')) showCue(p, 'hold the bow level and still', 4200);
+}
+
+// ------------------------------------------------------------------ simulator (stands in for a glove)
+const sim = { 1: null, 2: null };
+const FULL_DRAW_MS = 1200;
+function simStart(p) {
+  if (sim[p]) return;
+  const t0 = performance.now();
+  send({ t: 'draw_start', p, src: 'sim' });
+  sim[p] = { t0, timer: setInterval(() => {
+    send({ t: 'draw', p, src: 'sim', power: +Math.min(1, (performance.now() - t0) / FULL_DRAW_MS).toFixed(2) });
+  }, 50) };
+}
+function simEnd(p) {
+  const s = sim[p]; if (!s) return;
+  clearInterval(s.timer); sim[p] = null;
+  const held = Math.round(performance.now() - s.t0);
+  if (held < 150) { send({ t: 'cancel', p, src: 'sim' }); return; }
+  send({ t: 'release', p, src: 'sim', power: +Math.min(1, held / FULL_DRAW_MS).toFixed(2), held_ms: held, pitch: null });
+}
+const KEYS = { a: 1, l: 2 };
+addEventListener('keydown', e => { const p = KEYS[e.key.toLowerCase()]; if (p && !e.repeat) simStart(p); });
+addEventListener('keyup', e => { const p = KEYS[e.key.toLowerCase()]; if (p) simEnd(p); });
+
+// ------------------------------------------------------------------ game mechanics
+function fire(p, power, pitch) {
+  if (winner || countdown) return;
+  const s = players[p];
+  const angle = Math.max(-10, Math.min(75, pitch ?? s.angle)) * Math.PI / 180;
+  const speed = 260 + 560 * power;                 // px/s - power is the skill: too weak falls short, too strong overshoots
+  arrows.push({ p, x: s.x + 26 * s.dir, y: GROUND - 58,
+                vx: Math.cos(angle) * speed * s.dir, vy: -Math.sin(angle) * speed,
+                power, stuck: 0, alive: true });
+}
+function damage(power) { return Math.round(8 + 17 * power); }   // 8-25 body, x1.5 headshot
+
+function step(dt) {
+  for (const a of arrows) {
+    if (a.stuck) { a.stuck += dt; continue; }
+    a.vy += GRAVITY * dt; a.x += a.vx * dt; a.y += a.vy * dt;
+    const foe = players[a.p === 1 ? 2 : 1];
+    // body hitbox around the opponent
+    if (!winner && Math.abs(a.x - foe.x) < 16 && a.y > GROUND - 80 && a.y < GROUND) {
+      const head = a.y < GROUND - 62;
+      const dmg = Math.round(damage(a.power) * (head ? 1.5 : 1));
+      foe.hp = Math.max(0, foe.hp - dmg); foe.flash = 0.35; a.alive = false;
+      log(`P${a.p} HIT P${a.p === 1 ? 2 : 1}${head ? ' — HEADSHOT' : ''} for ${dmg}  (hp ${foe.hp})`, true);
+      send({ t: 'hit', p: a.p, target: a.p === 1 ? 2 : 1, dmg, head, src: 'sim-game' });
+      if (foe.hp === 0) { winner = a.p; log(`🏆 Player ${a.p} wins!`, true); }
+    }
+    if (a.y >= GROUND) { a.y = GROUND; a.stuck = 0.001; }
+    if (a.x < -50 || a.x > W + 50) a.alive = false;
+  }
+  arrows = arrows.filter(a => a.alive && a.stuck < 2.5);
+  for (const p of [1, 2]) players[p].flash = Math.max(0, players[p].flash - dt);
+}
+
+function resetDuel(broadcast = true) {
+  for (const p of [1, 2]) Object.assign(players[p], { hp: 100, flash: 0 });
+  arrows = []; winner = null; log('duel reset', true);
+  if (broadcast) send({ t: 'reset', src: 'sim-game' });
+}
+document.getElementById('reset').onclick = () => resetDuel(true);
+
+// ------------------------------------------------------------------ round countdown (recenters both gloves)
+// The glove's zero takes ~4 s (settle, gyro drift, 1 s average), so the countdown covers it.
+const COUNTDOWN_MS = 4500;
+let countdown = null;   // { t0 } while counting down
+function startRound(broadcast = true) {
+  if (countdown && performance.now() - countdown.t0 < 1000) return;   // our own echo from the server
+  resetDuel(false);
+  countdown = { t0: performance.now() };
+  log('round starting: hold your bow level and still', true);
+  if (broadcast) {
+    send({ t: 'round_start', src: 'sim-game' });
+    for (const p of [1, 2]) send({ t: 'cmd', p, cmd: 'zero' });
+  }
+}
+document.getElementById('round').onclick = () => startRound(true);
+
+// ------------------------------------------------------------------ drawing
+const cv = document.getElementById('game'), ctx = cv.getContext('2d');
+function drawArcher(p) {
+  const s = players[p], c = COLORS[p], x = s.x, d = s.dir;
+  ctx.save();
+  ctx.strokeStyle = s.flash > 0 ? '#fff' : c; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(x, GROUND - 70, 9, 0, Math.PI * 2); ctx.stroke();           // head
+  ctx.beginPath(); ctx.moveTo(x, GROUND - 61); ctx.lineTo(x, GROUND - 28);               // body
+  ctx.moveTo(x, GROUND - 28); ctx.lineTo(x - 10, GROUND); ctx.moveTo(x, GROUND - 28); ctx.lineTo(x + 10, GROUND);
+  ctx.stroke();
+  // bow aimed at current angle
+  const ang = (s.pitch ?? s.angle) * Math.PI / 180;
+  const bx = x + 24 * d, by = GROUND - 56;
+  const pull = (s.drawing ? s.power : 0) * 16;
+  ctx.translate(bx, by); ctx.scale(d, 1); ctx.rotate(-ang);
+  ctx.strokeStyle = '#c99a5b'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(-6, 0, 22, -1.2, 1.2); ctx.stroke();                          // bow limb
+  ctx.strokeStyle = '#ddd'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(-6 + 22 * Math.cos(-1.2), 22 * Math.sin(-1.2));
+  ctx.lineTo(-6 - pull, 0); ctx.lineTo(-6 + 22 * Math.cos(1.2), 22 * Math.sin(1.2)); ctx.stroke();
+  if (s.drawing) { ctx.strokeStyle = '#eee'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-6 - pull, 0); ctx.lineTo(22, 0); ctx.stroke(); }
+  ctx.restore();
+  // arm to bow
+  ctx.strokeStyle = c; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, GROUND - 52); ctx.lineTo(bx, by); ctx.stroke();
+  // hp bar
+  const bw = 120, bxl = x - bw / 2;
+  ctx.fillStyle = '#0008'; ctx.fillRect(bxl, GROUND - 112, bw, 10);
+  ctx.fillStyle = c; ctx.fillRect(bxl, GROUND - 112, bw * s.hp / 100, 10);
+  ctx.fillStyle = '#fff'; ctx.font = '600 13px system-ui'; ctx.textAlign = 'center';
+  ctx.fillText(`P${p}  ${s.hp} HP`, x, GROUND - 120);
+}
+function render() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#2a3a5c'); g.addColorStop(1, '#41587f');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // castle silhouettes for the fairytale vibe
+  ctx.fillStyle = '#25324d';
+  for (const cx of [300, 480, 660]) { ctx.fillRect(cx - 30, GROUND - 120, 60, 120); ctx.fillRect(cx - 38, GROUND - 132, 14, 14); ctx.fillRect(cx - 7, GROUND - 132, 14, 14); ctx.fillRect(cx + 24, GROUND - 132, 14, 14); }
+  ctx.fillStyle = '#2f5a3a'; ctx.fillRect(0, GROUND, W, H - GROUND);
+  for (const a of arrows) {
+    const ang = a.stuck ? Math.atan2(a.vy, a.vx) : Math.atan2(a.vy, a.vx);
+    ctx.save(); ctx.translate(a.x, a.y); ctx.rotate(ang);
+    ctx.globalAlpha = a.stuck ? Math.max(0, 1 - a.stuck / 2.5) : 1;
+    ctx.strokeStyle = '#f1e2c4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(-22, 0); ctx.lineTo(0, 0); ctx.stroke();
+    ctx.fillStyle = COLORS[a.p]; ctx.beginPath(); ctx.moveTo(4, 0); ctx.lineTo(-3, -3); ctx.lineTo(-3, 3); ctx.fill();
+    ctx.restore();
+  }
+  drawArcher(1); drawArcher(2);
+  if (winner) {
+    ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = COLORS[winner]; ctx.font = '700 44px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(`Player ${winner} wins!`, W / 2, H / 2);
+    ctx.fillStyle = '#ccc'; ctx.font = '16px system-ui'; ctx.fillText('press Start round to play again', W / 2, H / 2 + 34);
+  }
+  if (cue && performance.now() < cue.until && !countdown) {
+    ctx.fillStyle = '#000c'; ctx.fillRect(0, 0, W, 64);
+    ctx.fillStyle = COLORS[cue.p]; ctx.font = '700 28px system-ui'; ctx.textAlign = 'center';
+    ctx.fillText(`P${cue.p}: ${cue.text}`, W / 2, 42);
+  }
+  if (countdown) {
+    const t = performance.now() - countdown.t0;
+    ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
+    if (t < COUNTDOWN_MS) {
+      ctx.font = '600 22px system-ui'; ctx.fillText('Hold your bow level and still', W / 2, H / 2 - 50);
+      ctx.font = '700 72px system-ui'; ctx.fillText(String(Math.ceil((COUNTDOWN_MS - t) / 1500)), W / 2, H / 2 + 30);
+    } else {
+      ctx.fillStyle = '#3ccf7a'; ctx.font = '700 72px system-ui'; ctx.fillText('GO!', W / 2, H / 2 + 30);
+    }
+  }
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  if (countdown && now - countdown.t0 > COUNTDOWN_MS + 700) countdown = null;
+  step(dt); render(); updateCard(1); updateCard(2);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
