@@ -361,6 +361,7 @@ MonoBehaviour:
   nockedArrow: {fileID: 5935217502110521422}
   arrowPrefab: {fileID: 0}
   trajectory: {fileID: 0}
+  showArc: 0
   inputSource: {fileID: 0}
   viewportAnchor: {x: 0.78, y: 0.3}
   viewDepth: 0.6

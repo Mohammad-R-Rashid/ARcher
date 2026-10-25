@@ -78,11 +78,14 @@ def main():
     ap.add_argument("--host", action="store_true", help="this glove creates the WiFi network (only one glove)")
     ap.add_argument("--ssid", default="BowDuel", help="network name (default BowDuel)")
     ap.add_argument("--password", default="bowduel26", help="at least 8 characters (default bowduel26)")
+    ap.add_argument("--open", action="store_true", help="no password (most compatible with phones)")
     ap.add_argument("--flash", action="store_true", help="erase and install MicroPython first")
     ap.add_argument("--port", help="serial port (default: the first Espressif board found)")
     args = ap.parse_args()
-    if len(args.password) < 8:
-        sys.exit("WiFi passwords must be at least 8 characters")
+    if args.open:
+        args.password = ""
+    elif len(args.password) < 8:
+        sys.exit("WiFi passwords must be at least 8 characters (or use --open for no password)")
 
     port = args.port or find_port()
     if not port:
@@ -121,9 +124,11 @@ def main():
         run(*mp, *files, "+", "reset")
 
     action = "creates WiFi" if args.host else "joins"
-    print("\nDone. Glove P%d is rebooting: it %s '%s', then finds server.py on its own." % (args.player, action, args.ssid))
+    then = "and serves http://192.168.4.1" if args.host else ("and connects to glove 1" if args.ssid == "BowDuel" else "then finds server.py on its own")
+    print("\nDone. Glove P%d is rebooting: it %s '%s' %s." % (args.player, action, args.ssid, then))
     if args.host:
-        print("Join '%s' (password %s) on a phone or laptop and open http://192.168.4.1" % (args.ssid, args.password))
+        print("Join '%s' (%s) on a phone or laptop and open http://192.168.4.1"
+              % (args.ssid, "password " + args.password if args.password else "no password"))
     print("Open the test page: the P%d card turns 'online (wifi)'." % args.player)
     print("First boot only: flex calibration starts automatically. The page shows STRAIGHT / BEND prompts.")
     print("To watch the board's own output: python3 -m mpremote connect %s" % port)

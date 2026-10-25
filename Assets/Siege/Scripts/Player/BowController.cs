@@ -17,6 +17,7 @@ namespace Siege
         public Transform nockedArrow;      // visual arrow resting on the string
         public Arrow arrowPrefab;
         public LineRenderer trajectory;
+        public bool showArc;               // dotted arc to where the arrow will land (GloveSetup turns it on for the glove)
         public MonoBehaviour inputSource;  // IBowInput
 
         [Header("View model (camera-local, metres under the scaled XR origin)")]
@@ -85,7 +86,10 @@ namespace Siege
             if (drawing) UpdateDraw();
             if (m_Input != null && m_Input.ReleasedThisFrame && m_WasDrawing)
             {
-                if (CurrentDraw >= minDrawToFire) Fire(CurrentDraw, null);
+                // The glove reports the exact power it was let go at; the smoothed CurrentDraw lags behind it.
+                float power = m_Input is GloveBowInput glove ? glove.ReleasePower
+                            : m_Input is CombinedBowInput both && both.Owner is GloveBowInput ? both.ReleasePower : CurrentDraw;
+                if (power >= minDrawToFire) Fire(power, null);
                 EndDraw();
                 CurrentDraw = 0f;
             }
@@ -93,7 +97,8 @@ namespace Siege
             m_WasDrawing = drawing;
 
             Pose(dt);
-            if (trajectory) trajectory.enabled = false;   // no aim arc: the arrow lands on the crosshair
+            // Off by default (a full-draw arrow lands on the crosshair); with the glove it shows short, weak shots.
+            if (trajectory) { if (showArc) UpdateTrajectory(); else trajectory.enabled = false; }
         }
 
         void BeginDraw()
@@ -340,7 +345,7 @@ namespace Siege
             trajectory.enabled = true;
             var p = nockedArrow.position;
             float spd = SpeedFor(CurrentDraw);
-            var v = AimDirection(p, spd) * spd;
+            var v = AimDirection(p, SpeedFor(1f)) * spd;   // same as Fire: aimed for full draw, loosed at this draw's speed
             int n = 0;
             const float step = 0.045f;
             int mask = Layers.Mask(Layers.Castle, Layers.Enemy, Layers.Environment);

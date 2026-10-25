@@ -1,9 +1,35 @@
 # Bow Glove Kit
 
-> **For Claude CLI / anyone setting this up on a new Mac:** follow "Setup & run on a fresh Mac" below, top to bottom.
-> The hardware facts and past debugging notes are in `CLAUDE.md`.
+## The gloves (XIAO ESP32-S3 / C3): Arduino firmware, one glove per phone
 
-## Setup & run on a fresh Mac (step by step)
+The real game uses `arduino/glove/glove.ino`. Each phone turns on its **hotspot on 2.4 GHz** (iPhone: Personal Hotspot
++ Maximize Compatibility; Samsung: band 2.4 GHz); its glove joins it and sends every event as JSON over **UDP port 9000**
+to the phone. How the AR app receives them: `HANDOFF.md`.
+
+```bash
+# once: brew install arduino-cli, the esp32 core (https://espressif.github.io/arduino-esp32/package_esp32_index.json)
+python3 arduino/flash_glove.py --install-libs --board s3 --player 1 --ssid "<hotspot>" --password "<password>"
+python3 arduino/flash_glove.py --board c3 --player 2 --ssid "<other phone's hotspot>" --password "<password>"
+# a glove can know several phones: repeat --ssid/--password; it joins whichever hotspot is on (strongest wins)
+```
+- Power: a USB power bank in the glove's USB-C port (see "Power" below).
+- If a glove won't join, its USB serial output lists the hotspots it can see and the WiFi driver's refusal reason.
+- First flash of a board that still runs MicroPython: add `--erase`; an S3 may need **BOOT held while plugging in**,
+  then **RESET** after the upload.
+- First boot: flex calibration (S3 LED solid = straight, blinking = bend; prompts also arrive as `log` messages).
+  Saved on the board.
+- Testing without the app: open `http://<glove IP>` on the hotspot phone (the glove prints its IP on USB serial);
+  `http://<glove 1 IP>/?gloves=<glove 2 IP>` shows both gloves on one page.
+- `--own-network` makes a glove host WiFi `BowDuel-P<n>` (192.168.4.1) itself, for tests without a hotspot.
+- `arduino/ap_test/` is a 20-line WiFi check (hosts `BowDuelTest`).
+
+Why Arduino: no phone (iPhone or Android) could join a WiFi network hosted by the MicroPython firmware below, while an
+Arduino-hosted one worked immediately. The MicroPython version (`glove.py`, Pico over USB + `server.py`) is kept for
+bench tests.
+
+---
+
+## MicroPython / Pico bench setup (older; step by step)
 
 Goal: Pico with flex sensor (+ optional IMU) plugged into this Mac over USB → `server.py` → test page in a browser shows the glove live and shoots arrows.
 
@@ -80,7 +106,7 @@ server.py on a laptop  ──WebSocket ws://<laptop-ip>:8000/ws──▶  phone 
 | `index.html` | Browser (served by server.py) | Live sensor readout + 2D mock duel + simulate buttons + Start round countdown |
 | `HANDOFF.md` | (doc) | How the AR app connects: messages, countdown/recenter flow, Swift snippet |
 
-## Switch to the XIAO ESP32-S3
+## XIAO with MicroPython (superseded by the Arduino firmware above)
 
 **Network:** glove 1 creates its own WiFi `BowDuel` (password `bowduel26`); glove 2, the laptop and the phones join it.
 No hotspot or router needed (an iPhone hotspot gave the Mac no IPv4 address, so it couldn't reach the gloves).
@@ -120,13 +146,12 @@ Wiring on the XIAO ESP32-S3 (same D-labels on the C3, different GPIOs):
 - Long breadboards often split their power rails in the middle: check continuity.
 Recalibrate the flex (`Recalibrate flex`) and recenter after moving to the XIAO: its ADC reads differently from the Pico.
 
-### Battery (LiPo straight onto the XIAO, no booster)
-- Solder the LiPo to the **BAT+ / BAT− pads on the XIAO ESP32-S3's underside**. The board has a built-in charger
-  (charges over its USB-C) and makes 3.3 V for itself, the flex and the IMU from the battery.
-- **Not** to the breadboard rails: a LiPo is 3.3–4.2 V. On the 3V3 pin that exceeds the ESP32 and IMU limit (3.6 V);
-  on the 5V pin it sags as the battery drains and back-feeds when USB is plugged in.
-- **Check polarity before connecting**: many LiPos have red/black swapped in the plug. Red must reach BAT+.
-- The PowerBoost 500C isn't needed (it would only add an on/off switch and a low-battery light).
+### Power: a USB power bank
+What works: **a portable USB charger (power bank) into the glove's USB-C port**, the same power as a laptop's USB.
+Tried on 2026-10-25 and did not keep the glove running: a LiPo on the XIAO's 5V pin (it never finished joining
+WiFi; WiFi draws ~300 mA bursts and a 3.7-4.2 V cell leaves the regulator no headroom), and a LiPo through an Adafruit
+PowerBoost 500C (not resolved; check its unsoldered header pins first if you try again). Never connect a battery to
+the 5V/3V3 pins while USB is plugged in.
 
 ## Protocol (JSON, one message per line/datagram)
 
@@ -134,14 +159,18 @@ Glove → server → everyone (`p` = player 1|2, `src` = "usb" | "wifi" | "sim")
 
 | `t` | Fields | When |
 |---|---|---|
-| `draw_start` | | Fist closed (bow drawn) |
-| `draw` | `power` 0–1 | Every 50 ms while drawing (animate the bowstring) |
-| `release` | `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
-| `cancel` | | Fist shorter than 150 ms (noise) |
-| `hb` | `bend` 0–1, `state`, `pitch`, `roll`, `imu` | 4×/s heartbeat |
-| `calib` | `open`, `fist` | Calibration done |
-| `zero` | `pitch0`, `roll0` | Aim zeroed (offset now subtracted from every pitch/roll) |
+| `draw_start` | `shot`* | Fist closed (bow drawn) |
+| `draw` | `shot`*, `power` 0–1, `pitch` | Every 50 ms while drawing (animate the bowstring, preview the arc; pitch as in `release`) |
+| `release` | `shot`*, `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
+| `cancel` | `shot`* | Draw too weak to shoot: power under 0.3 (fist held < 0.36 s) |
+| `hb` | `bend` 0–1, `state`, `shot`*, `pitch`, `roll`, `imu` | 4×/s heartbeat |
+| `calib` | `open`, `fist`, `id`* | Calibration done |
+| `zero` | `ok`*, `pitch0`, `roll0`, `id`* | Aim zeroed (offset now subtracted from every pitch/roll); `ok:false` = couldn't |
 | `log` | `msg` | Human-readable status |
+
+\* Arduino firmware only. Over UDP it sends `release`, `cancel`, `zero`, `calib` and `pong` 3 times; receivers
+dedupe by `shot` / `id`. Commands may carry an `id` (`{"t":"cmd","cmd":"zero","id":7}`) so a retry isn't run
+twice. Details: `HANDOFF.md` → "Lost packets".
 
 Phone/page → server:
 - `{"t":"cmd","p":1,"cmd":"cal"}` → recalibrates glove 1; `"zero"` → hold the aiming pose still for ~4 s and it becomes pitch 0 / roll 0 (also `"ping"`)
@@ -151,7 +180,7 @@ Phone/page → server:
 ## Game mechanics (as implemented in the mock)
 
 - **Draw**: fist closed. Power ramps 0 → 1 over 1.2 s (`FULL_DRAW_MS`).
-- **Release**: hand opens → arrow fires with that power. Under 150 ms = cancel.
+- **Release**: hand opens → arrow fires with that power. Power under 0.3 (`MIN_DRAW_POWER`, same as the AR app's minimum) = cancel.
 - **Cooldown**: 400 ms between shots.
 - **Aim**: elevation from the glove IMU pitch if present, else from the phone (in AR the phone's camera direction should set aim).
 - **Damage**: 8–25 by power, ×1.5 headshot, 100 HP each.

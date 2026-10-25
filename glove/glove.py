@@ -12,7 +12,7 @@ BOARD = "pico"             # "pico", "xiao_s3" or "xiao_c3"
 TRANSPORT = "serial"       # "serial" (USB to laptop) or "udp" (WiFi)
 
 WIFI_SSID = "BowDuel"
-WIFI_PASS = "bowduel26"    # at least 8 characters
+WIFI_PASS = "bowduel26"    # at least 8 characters, or "" for an open network (no password)
 WIFI_HOST = False          # True = this glove CREATES the network and is the hub: phones connect to
                            # ws://192.168.4.1/ws, the other glove sends to it, test page at http://192.168.4.1
 SERVER_IP = None           # None = find server.py automatically; or its IP, e.g. "172.20.10.2"
@@ -26,7 +26,8 @@ PINS = {   # led: (pin, value that turns it on); None = board has no user LED
 }[BOARD]
 
 FULL_DRAW_MS = 1200  # fist held this long = full power
-MIN_DRAW_MS = 150    # shorter fists are treated as noise (cancel)
+MIN_DRAW_POWER = 0.30  # weaker draws cancel; power (not ms) so it follows FULL_DRAW_MS.
+                       # Same number as the AR app's BowController.minDrawToFire.
 COOLDOWN_MS = 400    # min time between shots
 CLOSE_AT = 0.60      # bend (0=open, 1=fist) that counts as "fist"
 OPEN_AT = 0.40       # bend that counts as "open" again (hysteresis)
@@ -99,10 +100,13 @@ class UdpLink:
         while not wlan.isconnected():
             print("Connecting to WiFi '%s'..." % WIFI_SSID)
             try:
-                wlan.connect(WIFI_SSID, WIFI_PASS)
+                if WIFI_PASS:
+                    wlan.connect(WIFI_SSID, WIFI_PASS)
+                else:
+                    wlan.connect(WIFI_SSID)
             except OSError as e:
                 print("WiFi error:", e)
-            for i in range(150):
+            for i in range(300):   # 30 s: joins have taken up to ~14 s, don't cut one off and restart it
                 if wlan.isconnected():
                     break
                 set_led((i // 5) % 2)
@@ -169,17 +173,22 @@ def start_access_point(network):
     """Create the WiFi network ourselves (like a hotspot): no router or phone needed."""
     network.WLAN(network.STA_IF).active(False)
     ap = network.WLAN(network.AP_IF)
+    ap.active(False)   # after a soft reboot the AP can stay "active" without broadcasting: restart it
+    time.sleep_ms(200)
     ap.active(True)
-    cfg = dict(essid=WIFI_SSID, password=WIFI_PASS, channel=6)
+    mode = network.AUTH_WPA2_PSK if WIFI_PASS else network.AUTH_OPEN
+    cfg = dict(essid=WIFI_SSID, channel=6)
+    if WIFI_PASS:
+        cfg["password"] = WIFI_PASS
     try:
-        ap.config(security=network.AUTH_WPA2_PSK, **cfg)
+        ap.config(security=mode, **cfg)
     except (ValueError, TypeError, AttributeError):
-        ap.config(authmode=network.AUTH_WPA2_PSK, **cfg)
+        ap.config(authmode=mode, **cfg)
     try:
         ap.config(max_clients=6)
     except Exception:
         pass
-    print("Hosting WiFi '%s' at %s" % (WIFI_SSID, ap.ifconfig()[0]))
+    print("Hosting WiFi '%s' (%s) at %s" % (WIFI_SSID, "password" if WIFI_PASS else "open", ap.ifconfig()[0]))
     return ap
 
 
@@ -195,7 +204,8 @@ class HubLink:
             network.hostname("glove-p%d" % PLAYER)
         except Exception:
             pass
-        start_access_point(network)
+        self.ap = start_access_point(network)
+        self.stations, self.last_station_check = set(), time.ticks_ms()
         self.udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.udp.bind(("0.0.0.0", SERVER_PORT))
         self.udp.setblocking(False)
@@ -222,8 +232,24 @@ class HubLink:
     def check(self):
         self.service()
 
+    def note(self, text):
+        """Hub status goes to the pages' log panel. Not print(): with the board on a computer's USB
+        and nothing reading it, print() blocks once its buffer fills and the whole glove freezes."""
+        self.broadcast(json.dumps({"t": "log", "p": PLAYER, "msg": "hub: " + text, "src": "wifi"}))
+
     # ---- network plumbing ----
     def service(self):
+        if time.ticks_diff(time.ticks_ms(), self.last_station_check) > 1000:   # log WiFi joins/leaves on USB
+            self.last_station_check = time.ticks_ms()
+            try:
+                now = set(":".join("%02x" % b for b in st[0]) for st in self.ap.status("stations"))
+            except Exception:
+                now = self.stations
+            for mac in now - self.stations:
+                self.note("WiFi device joined: %s (%d on BowDuel)" % (mac, len(now)))
+            for mac in self.stations - now:
+                self.note("WiFi device left: %s (%d on BowDuel)" % (mac, len(now)))
+            self.stations = now
         try:
             conn, _ = self.http.accept()
             conn.setblocking(False)
@@ -266,7 +292,7 @@ class HubLink:
             p = msg.get("p")
             if p is not None and self.gloves.get(p) != addr:
                 self.gloves[p] = addr
-                print("glove P%s at %s" % (p, addr[0]))
+                self.note("glove P%s connected from %s" % (p, addr[0]))
             msg["src"] = "wifi"
             self.broadcast(json.dumps(msg))
 
@@ -287,14 +313,14 @@ class HubLink:
                 self.write(conn, b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
                                  b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept + b"\r\n\r\n")
                 self.clients.append([conn, b""])
-                print("page/phone connected (%d open)" % len(self.clients))
+                self.note("page/phone connected (%d open)" % len(self.clients))
             elif path in ("/", "/index.html"):
                 self.send_file(conn, "index.html")
             else:
                 self.write(conn, b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                 conn.close()
         except Exception as e:
-            print("http error:", e)
+            self.note("http error: %s" % e)
             conn.close()
 
     def send_file(self, conn, name):
@@ -397,7 +423,6 @@ class HubLink:
             c[0].close()
         except OSError:
             pass
-        print("page/phone left (%d open)" % len(self.clients))
 
 
 link = SerialLink() if TRANSPORT == "serial" else HubLink() if WIFI_HOST else UdpLink()
@@ -672,14 +697,16 @@ def main():
             power = min(1.0, held / FULL_DRAW_MS)
             if b <= OPEN_AT:
                 state = "open"
-                if held >= MIN_DRAW_MS:
+                if power >= MIN_DRAW_POWER:
                     pitch, roll = tilt(RELEASE_LOOKBACK_MS)
                     send("release", power=round(power, 2), held_ms=held, pitch=pitch, roll=roll)
                     last_release = now
                 else:
                     send("cancel")
             elif time.ticks_diff(now, last_draw_msg) >= DRAW_MSG_MS:
-                send("draw", power=round(power, 2))
+                # same lookback as release, so the app's arc preview shows exactly the shot it would get
+                pitch, _ = tilt(RELEASE_LOOKBACK_MS)
+                send("draw", power=round(power, 2), pitch=pitch)
                 last_draw_msg = now
 
         if time.ticks_diff(now, last_hb) >= HB_MS:
