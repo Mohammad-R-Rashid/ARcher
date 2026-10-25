@@ -54,6 +54,8 @@ namespace Siege.EditorTools
             foreach (var v in caps.values) if (v.AsString() == "arkit") hasArkit = true;
             if (!hasArkit) caps.AddString("arkit");
             plist.root.SetBoolean("UIStatusBarHidden", true);
+            // The bow glove talks to the app over the phone's hotspot (UDP 9000); iOS asks for local-network access.
+            plist.root.SetString("NSLocalNetworkUsageDescription", "Connects to your bow glove over WiFi.");
             plist.WriteToFile(plistPath);
 #endif
         }
