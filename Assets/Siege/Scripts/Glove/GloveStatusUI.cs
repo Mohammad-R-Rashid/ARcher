@@ -5,15 +5,14 @@ using UnityEngine.UI;
 namespace Siege
 {
     // Small overlay for the bow glove, built at runtime and independent of the HUD: a status line
-    // (top-left), the glove's prompts (calibrate / recenter) and RECENTER + AIM buttons (bottom-left).
+    // (top-right) and the glove's own prompts (calibrate).
     public class GloveStatusUI : MonoBehaviour
     {
         static readonly Color Ok = new Color(0.55f, 1f, 0.6f), Off = new Color(1f, 1f, 1f, 0.55f), Gold = new Color(1f, 0.85f, 0.45f);
 
         GloveBowInput m_Glove;
         Font m_Font;
-        Text m_Status, m_Prompt, m_AimText;
-        GameObject m_Recenter, m_Aim;
+        Text m_Status, m_Prompt;
 
         public void Bind(GloveBowInput glove)
         {
@@ -40,9 +39,7 @@ namespace Siege
             m_Prompt = Label(root, "Prompt", 46, TextAnchor.MiddleCenter, new Vector2(0.5f, 1), new Vector2(0, -170), new Vector2(1400, 70));
             m_Prompt.color = Gold;
             m_Prompt.fontStyle = FontStyle.Bold;
-            m_Recenter = MakeButton(root, "RECENTER", new Vector2(0, 0), new Vector2(230, 90), () => m_Glove.Recenter(), out _);
-            m_Aim = MakeButton(root, "AIM: PHONE", new Vector2(0, 0), new Vector2(230, 200), () =>
-                m_Glove.aimMode = m_Glove.aimMode == GloveBowInput.AimMode.Phone ? GloveBowInput.AimMode.GlovePitch : GloveBowInput.AimMode.Phone, out m_AimText);
+            // No RECENTER / AIM buttons: the phone always aims (crosshair), the glove only draws and looses.
 
             if (!FindAnyObjectByType<EventSystem>())
                 new GameObject("EventSystem", typeof(EventSystem), typeof(StandaloneInputModule));
@@ -56,10 +53,6 @@ namespace Siege
                                : "Glove: not connected (phone hotspot on?)";
             m_Status.color = on ? Ok : Off;
             m_Prompt.text = m_Glove.Prompt;
-            bool aimable = on && m_Glove.HasImu;
-            m_Recenter.SetActive(aimable);
-            m_Aim.SetActive(aimable);
-            m_AimText.text = m_Glove.aimMode == GloveBowInput.AimMode.Phone ? "AIM: PHONE" : "AIM: GLOVE";
         }
 
         Text Label(RectTransform parent, string name, int size, TextAnchor align, Vector2 anchor, Vector2 pos, Vector2 box)
@@ -79,23 +72,6 @@ namespace Siege
             var shadow = go.AddComponent<Shadow>();
             shadow.effectColor = new Color(0, 0, 0, 0.7f);
             return t;
-        }
-
-        GameObject MakeButton(RectTransform parent, string text, Vector2 anchor, Vector2 pos, UnityEngine.Events.UnityAction onClick, out Text label)
-        {
-            var go = new GameObject(text, typeof(RectTransform), typeof(Image), typeof(Button));
-            var r = (RectTransform)go.transform;
-            r.SetParent(parent, false);
-            r.anchorMin = r.anchorMax = r.pivot = anchor;
-            r.anchoredPosition = pos;
-            r.sizeDelta = new Vector2(300, 90);
-            go.GetComponent<Image>().color = new Color(0.45f, 0.12f, 0.06f, 0.92f);
-            go.GetComponent<Button>().onClick.AddListener(onClick);
-            label = Label(r, "Text", 32, TextAnchor.MiddleCenter, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(300, 90));
-            label.text = text;
-            label.color = Gold;
-            label.fontStyle = FontStyle.Bold;
-            return go;
         }
     }
 }
