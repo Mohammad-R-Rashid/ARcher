@@ -13,6 +13,7 @@ namespace Siege
         public Transform bowRoot;          // view-model root (child of camera)
         // Bones of the skinned bow (Stylized Newbie Weapons Pack): limbs flex, string bone pulls back.
         public Transform limbTop, limbBottom, stringBone;
+        public BowBender bender;            // mesh-deforming bend (preferred over the rigid limb bones)
         public Transform nockedArrow;      // visual arrow resting on the string
         public Arrow arrowPrefab;
         public LineRenderer trajectory;
@@ -20,16 +21,16 @@ namespace Siege
 
         [Header("View model (camera-local, metres under the scaled XR origin)")]
         // The grip is pinned to this point of the screen (works for any camera FOV / aspect).
-        public Vector2 viewportAnchor = new Vector2(0.8f, 0.3f);
-        public float viewDepth = 0.35f;    // metres in front of the lens
-        public Vector3 restEuler = new Vector3(4f, -10f, 24f);
+        public Vector2 viewportAnchor = new Vector2(0.78f, 0.3f);
+        public float viewDepth = 0.6f;     // metres in front of the lens (far enough for natural perspective)
         public float drawBack = 0.38f;     // string bone pull at full draw (bone-local units, toward the archer)
         public float limbBend = 14f;       // limb flex at full draw (degrees)
-        public float arrowScale = 0.77f;   // fired arrows: the 1.17 m model as a real ~0.9 m war arrow (game metres)
+        public float cant = 14f;           // bow tilted like an archer holds it (degrees)
+        public float arrowScale = 2.2f;    // fired arrows (game metres): big enough to follow in flight at room scale
 
         [Header("Aim assist")]
-        public float assistAngle = 4f;     // degrees around the crosshair that snap onto a target
-        public float minDrawToFire = 0.3f;
+        public float assistAngle = 2.5f;   // degrees around the crosshair that snap onto a target
+        public float minDrawToFire = 0.04f;   // any real pull fires; a weak one just doesn't carry far
 
         public static event Action<IDamageable> TargetHit;
         public Vector3? LockedPoint { get; private set; }      // locked target's current aim point
@@ -124,11 +125,13 @@ namespace Siege
         public void Fire(float power, Vector3? aimDirOverride)
         {
             power = Mathf.Clamp01(power);
-            var spawn = nockedArrow ? nockedArrow.position : cam.position;
+            var spawn = LaunchPoint();
             float speed = SpeedFor(power);
-            var dir = aimDirOverride ?? AimDirection(spawn, speed);
+            // Aim as for a full-strength shot, then loose at this draw's speed: a light pull drops short.
+            var dir = aimDirOverride ?? AimDirection(spawn, SpeedFor(1f));
             var arrow = Instantiate(arrowPrefab, spawn, Quaternion.LookRotation(dir));
-            arrow.transform.localScale = Vector3.one * arrowScale;
+            // Longer and proportionally thicker than life so a stuck arrow still reads from across the room.
+            arrow.transform.localScale = new Vector3(arrowScale * 1.7f, arrowScale * 1.7f, arrowScale);
             arrow.Launch(dir * speed, power);
             m_Cooldown = Tune.ArrowCooldown;
             m_RecoilVel = 9f + power * 8f;
@@ -138,7 +141,16 @@ namespace Siege
             ScreenFX.Punch(0.08f * power);
         }
 
+        // Arrows leave from just ahead of and below the lens, so they fly straight down the crosshair line
+        // instead of cutting diagonally across the screen from the bow's corner.
+        Vector3 LaunchPoint()
+        {
+            float s = cam.lossyScale.x;
+            return cam.position + cam.forward * 0.25f * s - cam.up * 0.02f * s + cam.right * 0.015f * s;
+        }
+
         float SpeedFor(float power) => Mathf.Lerp(Tune.ArrowMinSpeed, Tune.ArrowMaxSpeed, Mathf.Pow(Mathf.Clamp01(power), 0.8f));
+        // (ArrowMinSpeed is a feeble flick: with the full-draw aim, short pulls land well short of the crosshair.)
 
         // Locks the aim target nearest the crosshair inside the assist cone (trebuchet, knight, kegs, soldiers,
         // fireballs). The lock is sticky so a crowd doesn't flip it every frame, targets hidden behind the castle
@@ -283,30 +295,41 @@ namespace Siege
             m_RecoilVel += acc * dt;
             m_Recoil += m_RecoilVel * dt;
             float d = CurrentDraw;
-            float tremble = d > 0.85f ? (d - 0.85f) * 0.004f : 0f;
-            float sway = Mathf.Sin(Time.time * 1.3f) * 0.0015f;
+            float tremble = d > 0.85f ? (d - 0.85f) * 0.003f : 0f;
+            float sway = Mathf.Sin(Time.time * 1.3f) * 0.0012f;
             var lens = cam.GetComponent<Camera>();
             var anchor = cam.InverseTransformPoint(lens.ViewportToWorldPoint(new Vector3(viewportAnchor.x, viewportAnchor.y, viewDepth * cam.lossyScale.z)));
-            var pos = anchor + new Vector3(-0.01f * d + sway, 0.008f * d, -0.03f * d + m_Recoil * 0.01f)
-                      + UnityEngine.Random.insideUnitSphere * tremble;
-            bowRoot.localPosition = pos;
-            bowRoot.localRotation = Quaternion.Euler(restEuler + new Vector3(-m_Recoil * 3f, 0, -d * 6f + m_Recoil * 2f));
+            bowRoot.localPosition = anchor + new Vector3(-0.012f * d + sway, 0.01f * d, m_Recoil * 0.01f)
+                                    + UnityEngine.Random.insideUnitSphere * tremble;
 
-            limbTop.localRotation = m_LimbTopRest * Quaternion.Euler(-d * limbBend, 0, 0);
-            limbBottom.localRotation = m_LimbBotRest * Quaternion.Euler(d * limbBend, 0, 0);
+            // The bow (and the arrow on it) points where the shot will go, canted like an archer holds it.
+            var launch = LaunchPoint();
+            var dirWorld = AimDirection(launch, SpeedFor(1f));
+            var dirLocal = cam.InverseTransformDirection(dirWorld);
+            var aimRot = Quaternion.LookRotation(dirLocal, Vector3.up);
+            bowRoot.localRotation = aimRot * Quaternion.Euler(-m_Recoil * 4f, 0f, -cant - d * 4f + m_Recoil * 2f);
 
-            stringBone.localPosition = m_NockRest + Vector3.up * drawBack * d;
-            var nockW = stringBone.position;
+            Vector3 nockW;
+            if (bender)
+            {
+                bender.SetDraw(d);
+                nockW = bender.NockWorld;
+            }
+            else
+            {
+                limbTop.localRotation = m_LimbTopRest * Quaternion.Euler(-d * limbBend, 0, 0);
+                limbBottom.localRotation = m_LimbBotRest * Quaternion.Euler(d * limbBend, 0, 0);
+                stringBone.localPosition = m_NockRest + Vector3.up * drawBack * d;
+                nockW = stringBone.position;
+            }
             if (nockedArrow)
             {
                 bool show = m_Cooldown <= 0f && Armed;
                 nockedArrow.gameObject.SetActive(show);
-                // A fresh arrow slides up onto the string after each shot.
-                float since = -m_Cooldown;
-                float slide = show ? Mathf.Clamp01(since / 0.22f) : 0f;
-                var aim = AimDirection(nockW);
-                nockedArrow.position = nockW - aim * (1f - Ease.OutCubic(slide)) * 0.06f * cam.lossyScale.x - bowRoot.up * (1f - slide) * 0.03f * cam.lossyScale.x;
-                nockedArrow.rotation = Quaternion.LookRotation(aim, bowRoot.up);
+                // A fresh arrow is nocked after each shot: it slides back along the bow onto the string.
+                float slide = show ? Ease.OutCubic(Mathf.Clamp01(-m_Cooldown / 0.25f)) : 0f;
+                nockedArrow.rotation = Quaternion.LookRotation(bowRoot.forward, bowRoot.up);
+                nockedArrow.position = nockW + bowRoot.forward * (1f - slide) * 0.25f * bowRoot.lossyScale.x;
             }
         }
 

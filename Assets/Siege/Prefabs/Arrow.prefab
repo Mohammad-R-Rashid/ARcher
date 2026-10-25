@@ -50,6 +50,7 @@ MonoBehaviour:
   radius: 0.1
   tipLength: 1.15
   shootDownRadius: 1.4
+  fromPlayer: 1
 --- !u!1 &3809425192597685365
 GameObject:
   m_ObjectHideFlags: 0

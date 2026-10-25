@@ -399,6 +399,7 @@ namespace Siege
             else UpdateBar(m_CatBar, 0, dt);
             FollowCatapult();
             ApplySafeArea();
+            UpdateHint();
             UpdateArrows();
         }
 
@@ -410,6 +411,19 @@ namespace Siege
             if (gate) f = Mathf.Min(f, gate.Health / gate.maxHealth);
             if (m_Castle.keep) f = Mathf.Min(f, m_Castle.keep.Health / m_Castle.keep.maxHealth);
             return f;
+        }
+
+        // One-time onboarding: shown in battle until the first arrow is loosed, then never again this session.
+        static bool s_HasFired;
+        void UpdateHint()
+        {
+            if (!m_Game) return;
+            if (!s_HasFired && m_Game.bow && m_Game.bow.CurrentDraw > 0.5f) s_HasFired = true;
+            if (m_Game.State == GameManager.Phase.Battle)
+            {
+                string tracking = m_Game.TrackingProblem;
+                m_Prompt.text = tracking ?? (s_HasFired ? "" : "HOLD TO DRAW  -  RELEASE TO FIRE");
+            }
         }
 
         void ApplySafeArea()

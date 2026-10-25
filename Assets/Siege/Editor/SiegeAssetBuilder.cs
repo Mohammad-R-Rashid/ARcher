@@ -22,7 +22,8 @@ namespace Siege.EditorTools
         const string Prefabs = Root + "/Prefabs";
         const string Kingdom = "Assets/ithappy/Location_Kingdom/Prefabs/";
         const string ColorMatPath = "Assets/ithappy/Location_Kingdom/Materials/Color.mat";
-        public const float KeepBack = 7f;   // keep sits this far behind the castle centre (GameManager.keepOffsetUnits)
+        public const float KeepBack = 7f;
+        const float RaiderScale = 1.85f;      // raiders are drawn larger than life so they read clearly at room scale   // keep sits this far behind the castle centre (GameManager.keepOffsetUnits)
 
         static Material s_Color, s_Debris;
 
@@ -40,7 +41,8 @@ namespace Siege.EditorTools
             var fireball = BuildFireball(m);
             var marker = BuildMarker(m, "LandingMarker", m["Marker"], true);
             var coin = BuildCoin();
-            var castle = BuildCastle(coin);
+            var defender = BuildDefender(arrow);
+            var castle = BuildCastle(coin, defender);
             var soldier = BuildSoldier("Soldier", "Soldier_Sword");
             var spearman = BuildSoldier("Soldier_Spearman", "Soldier_Spear");
             var ladder = BuildArmyProp("Ladder", "Ladder");
@@ -98,6 +100,12 @@ namespace Siege.EditorTools
                 mi.animationType = ModelImporterAnimationType.None;
                 mi.importCameras = mi.importLights = false;
                 mi.SaveAndReimport();
+            }
+            // The view-model bow is bent on the CPU (BowBender), so its mesh must be readable.
+            foreach (var path in Directory.GetFiles("Assets/StylizedCharacter/Meshes/Item/Weapons/Bow", "*.fbx"))
+            {
+                var mi = (ModelImporter)AssetImporter.GetAtPath(path);
+                if (!mi.isReadable) { mi.isReadable = true; mi.SaveAndReimport(); }
             }
             foreach (var path in Directory.GetFiles(Root + "/Audio", "*.wav"))
             {
@@ -313,7 +321,7 @@ namespace Siege.EditorTools
             Object.DestroyImmediate(halo.GetComponent<Collider>());
             halo.name = "Halo";
             halo.transform.SetParent(root.transform, false);
-            halo.transform.localScale = Vector3.one * 4.2f;
+            halo.transform.localScale = Vector3.one * 5.5f;
             halo.AddComponent<Billboard>();
             var hr = halo.GetComponent<MeshRenderer>();
             hr.sharedMaterial = m["FireHalo"];
@@ -323,7 +331,7 @@ namespace Siege.EditorTools
             var l = lightGo.AddComponent<Light>();
             l.type = LightType.Point;
             l.color = new Color(1f, 0.55f, 0.2f);
-            l.range = 16f;
+            l.range = 28f;
             l.intensity = 5f;
             l.shadows = LightShadows.None;
             var fb = root.AddComponent<Fireball>();
@@ -378,7 +386,7 @@ namespace Siege.EditorTools
         }
 
         // ---------------------------------------------------------------- castle
-        static Castle BuildCastle(GameObject coin)
+        static Castle BuildCastle(GameObject coin, Defender defender)
         {
             var root = new GameObject("Castle");
             var castle = root.AddComponent<Castle>();
@@ -442,6 +450,23 @@ namespace Siege.EditorTools
             foreach (var c in crown.GetComponentsInChildren<Collider>()) Object.DestroyImmediate(c);
             SetLayer(crown, Layers.Castle);
             keep.dropOnDestroy = new[] { crown.transform };
+
+            // Allied archers: one on each front tower, two on the gatehouse.
+            void Post(CastlePiece on, Vector3 local, float sinkBelowTop)
+            {
+                var b = on.GetComponent<Renderer>().bounds;
+                var d = ((GameObject)PrefabUtility.InstantiatePrefab(defender.gameObject));
+                PrefabUtility.UnpackPrefabInstance(d, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+                d.transform.SetParent(on.transform, true);
+                var world = root.transform.TransformPoint(local);
+                d.transform.position = new Vector3(world.x, b.max.y - sinkBelowTop, world.z);
+                d.transform.rotation = root.transform.rotation;
+            }
+            Post(towers[2], new Vector3(-D, 0, D), 1.05f);
+            Post(towers[3], new Vector3(D, 0, D), 1.05f);
+            var gate = pieces.GetComponentsInChildren<CastlePiece>().First(p => p.kind == PieceKind.Gate);
+            Post(gate, new Vector3(-2.2f, 0, D - 0.4f), 0.9f);
+            Post(gate, new Vector3(2.2f, 0, D - 0.4f), 0.9f);
 
             // Courtyard treasure
             var treasure = new GameObject("Treasure").transform;
@@ -584,7 +609,60 @@ namespace Siege.EditorTools
             s.weapon.SetParent(s.armR, true); s.shield.SetParent(s.armL, true);
             foreach (var t in new[] { s.hips, s.torso, s.head, s.armL, s.armR, s.legL, s.legR }) BoxFromMesh(t.gameObject);
             SetLayer(root, Layers.Enemy);
+            root.transform.localScale = Vector3.one * RaiderScale;   // big, readable raiders in the room
             return Save<Soldier>(root, prefabName);
+        }
+
+        // Copies a mesh with every red palette swatch moved to the blue column (allied colours).
+        static Mesh BlueCopy(Mesh src)
+        {
+            Directory.CreateDirectory(Root + "/Models/Generated");
+            var path = $"{Root}/Models/Generated/{src.name}_Blue.asset";
+            var m = Object.Instantiate(src);
+            m.name = src.name + "_Blue";
+            var uv = m.uv;
+            const float cell = 51.2f / 1024f;
+            for (int i = 0; i < uv.Length; i++)
+                if (Mathf.FloorToInt(uv[i].x / cell) == 0 && uv[i].y > 0.5f) uv[i].x += 5 * cell;
+            m.uv = uv;
+            AssetDatabase.DeleteAsset(path);
+            AssetDatabase.CreateAsset(m, path);
+            return m;
+        }
+
+        // Allied archer: the footman rig in blue with a bow in the left hand.
+        static Defender BuildDefender(Arrow arrow)
+        {
+            const string fbx = Root + "/Models/Army.fbx";
+            var root = new GameObject("Defender");
+            var d = root.AddComponent<Defender>();
+            Transform Part(string n)
+            {
+                var t = Take(fbx, n);
+                var mf = t.GetComponent<MeshFilter>();
+                if (mf && mf.sharedMesh) mf.sharedMesh = BlueCopy(mf.sharedMesh);
+                return t;
+            }
+            var hips = Part("Soldier_Hips"); var torso = Part("Soldier_Torso"); var head = Part("Soldier_Head");
+            var armL = Part("Soldier_ArmL"); var armR = Part("Soldier_ArmR"); var legL = Part("Soldier_LegL"); var legR = Part("Soldier_LegR");
+            var offset = new Vector3(hips.position.x, 0, hips.position.z);
+            foreach (var t in new[] { hips, torso, head, armL, armR, legL, legR }) t.position -= offset;
+            hips.SetParent(root.transform, true);
+            legL.SetParent(hips, true); legR.SetParent(hips, true); torso.SetParent(hips, true);
+            head.SetParent(torso, true); armL.SetParent(torso, true); armR.SetParent(torso, true);
+            var bow = (GameObject)PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>("Assets/StylizedCharacter/Prefabs/Item/Weapon/Bow/Bow_Newbie_01_Bl.prefab"));
+            PrefabUtility.UnpackPrefabInstance(bow, PrefabUnpackMode.Completely, InteractionMode.AutomatedAction);
+            foreach (var a in bow.GetComponentsInChildren<Animator>(true)) Object.DestroyImmediate(a);
+            foreach (var t in bow.GetComponentsInChildren<Transform>(true)) GameObjectUtility.RemoveMonoBehavioursWithMissingScript(t.gameObject);
+            bow.transform.SetParent(armL, false);
+            bow.transform.position = armL.position + Vector3.down * 0.62f;   // in the left fist
+            bow.transform.localRotation = Quaternion.Euler(0, 90, 0);
+            bow.transform.localScale = Vector3.one * 0.95f;
+            d.hips = hips; d.torso = torso; d.head = head; d.armL = armL; d.armR = armR;
+            d.arrowPrefab = arrow;
+            SetLayer(root, Layers.Castle);
+            root.transform.localScale = Vector3.one * RaiderScale;
+            return Save<Defender>(root, "Defender");
         }
 
         static GameObject BuildArmyProp(string prefabName, string objectName)
@@ -596,6 +674,7 @@ namespace Siege.EditorTools
             t.localRotation = Quaternion.identity;
             BoxFromMesh(t.gameObject);
             SetLayer(root, Layers.Enemy);
+            root.transform.localScale = Vector3.one * Mathf.Lerp(1f, RaiderScale, 0.6f);
             return SaveGo(root, prefabName);
         }
 
@@ -737,6 +816,7 @@ namespace Siege.EditorTools
             waves.soldierPrefab = AssetDatabase.LoadAssetAtPath<GameObject>($"{Prefabs}/Soldier.prefab").GetComponent<Soldier>();
             waves.ladderPrefab = AssetDatabase.LoadAssetAtPath<GameObject>($"{Prefabs}/Ladder.prefab");
             waves.ramPrefab = AssetDatabase.LoadAssetAtPath<GameObject>($"{Prefabs}/Ram.prefab");
+            waves.WaveCount = 1;
             game.waves = waves;
             game.campPrefab = AssetDatabase.LoadAssetAtPath<GameObject>($"{Prefabs}/SiegeCamp.prefab");
             game.trebuchetPrefab = AssetDatabase.LoadAssetAtPath<GameObject>($"{Prefabs}/Trebuchet.prefab").GetComponent<Trebuchet>();
@@ -777,7 +857,11 @@ namespace Siege.EditorTools
             ctrl.limbTop = Find(bow, "Arm_Up");
             ctrl.limbBottom = Find(bow, "Arm_Low");
             ctrl.stringBone = Find(bow, "String");
-            go.transform.localScale = Vector3.one * 0.12f;
+            go.transform.localScale = Vector3.one * 0.3f;
+            // Real progressive limb bend + V string (the pack rig can only kink at the grip).
+            var skinned = bow.GetComponentInChildren<SkinnedMeshRenderer>();
+            ctrl.bender = skinned.gameObject.AddComponent<BowBender>();
+            ctrl.bender.source = skinned;
             ctrl.bowRoot = go.transform;
             foreach (var r in go.GetComponentsInChildren<Renderer>())
             {

@@ -4,9 +4,10 @@ using UnityEngine;
 
 namespace Siege
 {
-    // A siege ladder and its team. Two men carry it overhead to the gate wall beside the arch, walk it up
-    // against the battlements (one braces the foot, the other pushes it up hand over hand) and climb. A man
-    // who reaches the top gets over the parapet; shot climbers fall off and other raiders take their place.
+    // A siege ladder and its team. Two men carry it overhead to the gate wall beside the arch and walk it up
+    // (one braces the foot, the other pushes it up hand over hand) until it leans at ~72 degrees with its rails
+    // on the parapet's edge, then climb. A man who reaches the top gets over the parapet; shot climbers fall
+    // off and other raiders take their place.
     [DefaultExecutionOrder(-50)]
     public class SiegeLadder : MonoBehaviour
     {
@@ -17,6 +18,10 @@ namespace Siege
         const float Hands = 2.02f;        // overhead grip on a 1.8 m man
         const float RaiseTime = 1.3f;
         const float ClimbSpeed = 0.75f;   // metres of ladder per second
+        const float Angle = 72f;          // raised, from the horizontal
+        const float RailOff = 0.18f;      // ladder axis to the rails' wall side
+        const float Overhang = 1f;        // ladder standing proud of the parapet
+        const float ClimbOff = 0.56f;     // a climber's root off the ladder (fits Soldier's Climb pose)
 
         WaveManager m_Raid;
         Phase m_Phase = Phase.Carry;
@@ -24,8 +29,9 @@ namespace Siege
         readonly List<Climber> m_Climbers = new List<Climber>();
         readonly List<Vector3> m_Path = new List<Vector3>();
         int m_PathIndex, m_LastCount;
-        float m_Length = 7.5f, m_X, m_PhaseTime, m_GroundY, m_Rise, m_PusherAlong, m_FooterAlong, m_Solo;
-        Vector3 m_Center, m_Dir = Vector3.forward, m_Foot, m_Up = Vector3.up, m_RaiseFoot0, m_RaiseTop0;
+        float m_Length = 7.5f, m_X, m_PhaseTime, m_GroundY, m_PusherAlong, m_FooterAlong, m_Solo, m_Pop = 1f;
+        float m_TopRise, m_TopOut, m_TopY, m_ClimbTop;
+        Vector3 m_Center, m_Dir = Vector3.forward, m_Foot, m_Up = Vector3.up, m_RaiseFoot0, m_RaiseTop0, m_Walk, m_Scale = Vector3.one;
         bool m_Halted;
 
         public bool Fallen => m_Phase == Phase.Fallen;
@@ -42,11 +48,18 @@ namespace Siege
             }
         }
 
+        static float Pitch => 90f - Angle - 5f;   // climbers lean in a little less than the ladder
+
         public void Begin(WaveManager raid, IList<Soldier> carriers, float x)
         {
             m_Raid = raid;
             m_X = x;
+            // A solid slab collider would shield the men under it from arrows and catch the ones shot off it.
+            foreach (var c in GetComponentsInChildren<Collider>()) c.enabled = false;
             m_Length = MeasureLength();
+            FitToWall();
+            m_Pop = 0f;
+            transform.localScale = m_Scale * 0.02f;
             m_Center = Vector3.zero;
             int n = 0;
             foreach (var c in carriers)
@@ -82,10 +95,36 @@ namespace Siege
             return len > 2f && len < 15f ? len : 7.5f;
         }
 
+        // Where the raised ladder will stand: rails on the parapet's front edge (found by probing the real
+        // masonry), foot out on the ground. A ladder longer than the wall needs is cut down to ~1 m proud of
+        // the edge; the rungs just sit a little closer.
+        void FitToWall()
+        {
+            float sin = Mathf.Sin(Angle * Mathf.Deg2Rad), cos = Mathf.Cos(Angle * Mathf.Deg2Rad);
+            m_Raid.Parapet(m_X, out float top, out float edgeOut, out m_Walk);
+            m_TopY = m_Raid.GateFace.y + top;
+            float axisOut = edgeOut + RailOff * sin, axisY = m_TopY + RailOff * cos;
+            m_GroundY = WaveManager.Ground(m_Raid.GatePoint(m_X, axisOut + 1.5f)).y;
+            float along = 0f, footOut = axisOut;
+            for (int i = 0; i < 2; i++)
+            {
+                along = Mathf.Max(1f, axisY - m_GroundY) / sin;
+                footOut = axisOut + along * cos;
+                m_GroundY = WaveManager.Ground(m_Raid.GatePoint(m_X, footOut)).y;
+            }
+            float k = Mathf.Clamp((along + Overhang) / m_Length, 0.75f, 1f);
+            m_Length *= k;
+            m_Scale = transform.localScale;
+            m_Scale.y *= k;
+            m_TopRise = m_Length * sin;
+            m_TopOut = footOut - m_Length * cos;
+            m_ClimbTop = Mathf.Clamp((m_TopY - 0.4f - m_GroundY) / sin, 1f, m_Length - 0.6f);
+        }
+
         public bool Join(Soldier s)
         {
             if (!CanJoin || !s || !s.Alive) return false;
-            AddClimber(s, 0f);
+            AddClimber(s, 0f, false);
             return true;
         }
 
@@ -105,10 +144,16 @@ namespace Siege
 
         void Update()
         {
-            if (m_Halted) return;
-            if (!m_Raid) { Halt(); return; }
             float dt = Time.deltaTime;
             if (dt <= 0f) return;
+            if (m_Pop < 1f)
+            {
+                // grows in with its carriers as they step out of the camp
+                m_Pop = Mathf.Min(1f, m_Pop + dt / 0.3f);
+                transform.localScale = m_Scale * Mathf.Max(0.02f, Ease.OutBack(m_Pop));
+            }
+            if (m_Halted) return;
+            if (!m_Raid) { Halt(); return; }
             m_PhaseTime += dt;
             m_Carriers.RemoveAll(c => !c || !c.Alive);
             if (m_Carriers.Count == 1 && m_LastCount > 1) LostCarrier();
@@ -216,10 +261,6 @@ namespace Siege
             m_PhaseTime = 0f;
             m_RaiseFoot0 = transform.position;
             m_RaiseTop0 = transform.position + transform.up * m_Length;
-            m_GroundY = WaveManager.Ground(m_Raid.GatePoint(m_X, m_Length * 0.6f)).y;
-            // top end comes to rest just over the battlements
-            float topRel = m_Raid.GateFace.y + m_Raid.GateHeight - m_GroundY + 0.25f;
-            m_Rise = Mathf.Clamp(topRel, 2.5f, m_Length * 0.95f);
             // pick up from where the men actually stand along the (still level) ladder
             m_PusherAlong = AlongFromFoot(m_Carriers[0]);
             m_FooterAlong = m_Carriers.Count > 1 ? AlongFromFoot(m_Carriers[1]) : 0f;
@@ -241,10 +282,11 @@ namespace Siege
             float r = Mathf.Clamp01(m_PhaseTime / RaiseTime);
             var fwd = m_Raid.GateForward;
             // the foot comes down to the ground first, then is pushed in while the top slides up the wall
+            // (it is battered, so the top keeps clear of it) and over onto the parapet
             float footY = Hands * (1f - Mathf.SmoothStep(0f, 1f, r / 0.35f));
             float u = Ease.InOutCubic(Mathf.Clamp01((r - 0.2f) / 0.8f));
-            float h = Mathf.Lerp(Hands, m_Rise, u);
-            float topOut = Mathf.Lerp(0f, -0.25f, u);
+            float h = Mathf.Lerp(Hands, m_TopRise, u);
+            float topOut = Mathf.Lerp(0f, m_TopOut, u);
             float run = Mathf.Sqrt(Mathf.Max(0.01f, m_Length * m_Length - (h - footY) * (h - footY)));
             var top = m_Raid.GatePoint(m_X, topOut);
             top.y = m_GroundY + h;
@@ -279,42 +321,60 @@ namespace Siege
         void FinishRaise()
         {
             m_Phase = Phase.Raised;
-            var top = m_Foot + m_Up * m_Length;
-            Sfx.Play(Sound.Thud, top, 0.6f, 0.1f);
-            VFX.StoneChips(top, m_Raid.GateForward, 0.4f);
+            var edge = m_Foot + m_Up * ((m_TopY - m_GroundY) / Mathf.Max(0.2f, m_Up.y));
+            Sfx.Play(Sound.Thud, edge, 0.6f, 0.1f);
+            VFX.StoneChips(edge, m_Raid.GateForward, 0.4f);
             VFX.Dust(m_Foot, 0.4f);
             // both carriers go up: the pusher first, the footer right behind him
             for (int i = 0; i < m_Carriers.Count; i++)
             {
                 m_Carriers[i].carryHeight = 1f;
-                AddClimber(m_Carriers[i], i * 1.1f);
+                AddClimber(m_Carriers[i], i * 1.1f, true);
             }
             m_Carriers.Clear();
         }
 
         // ---------------------------------------------------------------- climbing
-        Vector3 FootStand => m_Foot + m_Raid.GateForward * 0.35f;
+        // The ladder's face on the climbers' side.
+        Vector3 Normal
+        {
+            get
+            {
+                var f = m_Raid.GateForward;
+                var n = f - m_Up * Vector3.Dot(f, m_Up);
+                return n.sqrMagnitude > 1e-4f ? n.normalized : f;
+            }
+        }
 
-        // Feet on the rungs: the root sits a little outboard so the angled legs meet the ladder.
-        Vector3 ClimbPoint(float along) => m_Foot + m_Up * along + m_Raid.GateForward * 0.35f;
+        // Toes on the rungs, hands on the rails: the root hangs off the ladder face, the body pitched in.
+        Vector3 ClimbPoint(float along) => m_Foot + m_Up * along + Normal * ClimbOff;
 
-        void AddClimber(Soldier s, float delay)
+        // Bottom of the climb, level with the foot of the ladder.
+        Vector3 FootStand => ClimbPoint(-ClimbOff * Normal.y / Mathf.Max(0.2f, m_Up.y));
+
+        void AddClimber(Soldier s, float delay, bool nearFoot)
         {
             s.followGround = true;
-            s.SetState(Soldier.State.March);
-            s.MoveTo(WaitStand, m_Raid.marchSpeed);
+            if (nearFoot)
+            {
+                s.SetState(Soldier.State.March);
+                s.MoveTo(m_Foot + m_Raid.GateForward * 1.3f, m_Raid.marchSpeed);
+            }
+            else
+            {
+                // a volunteer waits where he is, out on the rally line, until the ladder is clear
+                s.Stop();
+                s.Face(-m_Raid.GateForward);
+            }
             m_Climbers.Add(new Climber { s = s, wait = delay, speed = Random.Range(0.85f, 1.1f) });
         }
 
-        // Next man waits a step back from the foot.
-        Vector3 WaitStand => m_Foot + m_Raid.GateForward * 1.3f;
-
-        // Stages: 0 wait behind the foot, 1 step onto the bottom rung, 2 climb, 3 over the parapet.
+        // Stages: 0 wait for a clear ladder, 1 walk to the foot, 2 climb, 3 over the parapet.
         void UpdateClimbers(float dt)
         {
             if (m_Phase != Phase.Raised) return;
-            float top = m_Length - 1f;
             var toWall = -m_Raid.GateForward;
+            float start = -ClimbOff * Normal.y / Mathf.Max(0.2f, m_Up.y);
             for (int i = 0; i < m_Climbers.Count; i++)
             {
                 var c = m_Climbers[i];
@@ -338,31 +398,31 @@ namespace Siege
                             c.stage = 1;
                             c.t = 0f;
                             c.s.SetState(Soldier.State.March);
-                            c.s.MoveTo(FootStand, m_Raid.marchSpeed);
+                            c.s.MoveTo(FootStand, m_Raid.marchSpeed * 1.4f);
                         }
                         else if (c.s.Arrived) c.s.Face(toWall);
                         break;
                     }
                     case 1:
-                        if (c.s.Arrived || WaveManager.FlatDistance(c.s.transform.position, FootStand) < 0.4f || c.t > 4f)
+                        if (c.s.Arrived || WaveManager.FlatDistance(c.s.transform.position, FootStand) < 0.4f || c.t > 6f)
                         {
                             c.stage = 2;
-                            c.along = 0f;
+                            c.along = start;
                             c.s.Stop();
                             c.s.followGround = false;
-                            c.s.bodyPitch = 12f;
+                            c.s.bodyPitch = Pitch;
                             c.s.SetState(Soldier.State.Climb);
                         }
                         break;
                     case 2:
                     {
                         // keep a body length below the man above
-                        float cap = top;
+                        float cap = m_ClimbTop;
                         for (int j = 0; j < i; j++)
                             if (m_Climbers[j].stage == 2) cap = Mathf.Min(cap, m_Climbers[j].along - 1.7f);
                         c.along = Mathf.Max(c.along, Mathf.Min(c.along + ClimbSpeed * c.speed * dt, cap));
                         c.s.Place(ClimbPoint(c.along), toWall);
-                        if (c.along >= top - 1e-3f)
+                        if (c.along >= m_ClimbTop - 1e-3f)
                         {
                             c.stage = 3;
                             c.t = 0f;
@@ -372,10 +432,11 @@ namespace Siege
                     }
                     case 3:
                     {
-                        // over the parapet onto the wall walk
-                        float k = Mathf.Clamp01(c.t / 0.7f);
-                        var walk = m_Raid.GatePoint(m_X, -m_Raid.GateDepth * 0.4f, m_Raid.GateHeight - 0.9f);
-                        var p = Vector3.Lerp(c.from, walk, Ease.InOutCubic(k)) + Vector3.up * Mathf.Sin(k * Mathf.PI) * 0.7f;
+                        // a leg over the parapet and down onto the wall walk behind it
+                        float k = Mathf.Clamp01(c.t / 0.8f);
+                        float arc = Mathf.Max(0.6f, m_TopY + 0.3f - (c.from.y + m_Walk.y) * 0.5f);
+                        var p = Vector3.Lerp(c.from, m_Walk, Ease.InOutCubic(k)) + Vector3.up * Mathf.Sin(k * Mathf.PI) * arc;
+                        c.s.bodyPitch = Mathf.Lerp(Pitch, 0f, k);
                         c.s.Place(p, toWall);
                         if (k >= 1f)
                         {
