@@ -1,6 +1,9 @@
 __pycache__/
-*.pyc
+.claude/
 .DS_Store
+*.pyc
+arduino/glove/config.h
+arduino/glove/page.h
+board-backup/
 calib.json
 firmware/
-board-backup/

@@ -138,20 +138,37 @@ function log(text, ev = false) {
 }
 
 // ------------------------------------------------------------------ server connection
-let ws = null;
-function connect() {
+// One WebSocket per glove/server: this page's own host, plus any in ?gloves=ip1,ip2
+// (a glove only serves its own events, so this is how one page shows both players).
+const HOSTS = [location.host, ...(new URLSearchParams(location.search).get('gloves') || '')
+  .split(',').map(h => h.trim()).filter(Boolean)];
+const links = [];   // { host, ws, players: Set of player numbers seen on it }
+function updatePill() {
   const pill = document.getElementById('ws');
-  try { ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws'); }
-  catch { ws = null; pill.textContent = 'server: offline (local sim only)'; return; }
-  ws.onopen = () => { pill.textContent = 'server: connected'; pill.className = 'pill ok'; log('connected to server'); };
-  ws.onclose = () => { pill.textContent = 'server: offline'; pill.className = 'pill bad'; setTimeout(connect, 1500); };
-  ws.onmessage = e => { try { handle(JSON.parse(e.data)); } catch (err) { console.warn(err); } };
+  const up = links.filter(l => l.ws && l.ws.readyState === 1).length;
+  pill.textContent = up === 0 ? 'server: offline' : links.length > 1 ? `connected ${up}/${links.length}` : 'server: connected';
+  pill.className = 'pill ' + (up === links.length ? 'ok' : 'bad');
+}
+function connect(link) {
+  try { link.ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + link.host + '/ws'); }
+  catch { link.ws = null; updatePill(); return; }
+  link.ws.onopen = () => { updatePill(); log('connected to ' + link.host); };
+  link.ws.onclose = () => { updatePill(); setTimeout(() => connect(link), 1500); };
+  link.ws.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data);
+      if (m.p && (m.src === 'usb' || m.src === 'wifi')) link.players.add(m.p);
+      handle(m);
+    } catch (err) { console.warn(err); }
+  };
 }
 function send(msg) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(msg));
-  else if (msg.t !== 'cmd') handle(msg);        // offline: run the simulator locally
+  const open = links.filter(l => l.ws && l.ws.readyState === 1);
+  if (!open.length) { if (msg.t !== 'cmd') handle(msg); return; }   // offline: run the simulator locally
+  const owners = msg.t === 'cmd' ? open.filter(l => l.players.has(msg.p)) : [];   // a command goes to that glove
+  for (const l of owners.length ? owners : open) l.ws.send(JSON.stringify(msg));
 }
-connect();
+for (const host of HOSTS) { const link = { host, ws: null, players: new Set() }; links.push(link); connect(link); }
 
 // ------------------------------------------------------------------ protocol
 function handle(m) {

@@ -1,9 +1,32 @@
 # Bow Glove Kit
 
-> **For Claude CLI / anyone setting this up on a new Mac:** follow "Setup & run on a fresh Mac" below, top to bottom.
-> The hardware facts and past debugging notes are in `CLAUDE.md`.
+## The gloves (XIAO ESP32-S3 / C3): Arduino firmware, one glove per phone
 
-## Setup & run on a fresh Mac (step by step)
+The real game uses `arduino/glove/glove.ino`. Each phone turns on its **hotspot on 2.4 GHz** (iPhone: Personal Hotspot
++ Maximize Compatibility; Samsung: band 2.4 GHz); its glove joins it and sends every event as JSON over **UDP port 9000**
+to the phone. How the AR app receives them: `HANDOFF.md`.
+
+```bash
+# once: brew install arduino-cli, the esp32 core (https://espressif.github.io/arduino-esp32/package_esp32_index.json)
+python3 arduino/flash_glove.py --install-libs --board s3 --player 1 --ssid "<hotspot>" --password "<password>"
+python3 arduino/flash_glove.py --board c3 --player 2 --ssid "<other phone's hotspot>" --password "<password>"
+```
+- First flash of a board that still runs MicroPython: add `--erase`; an S3 may need **BOOT held while plugging in**,
+  then **RESET** after the upload.
+- First boot: flex calibration (S3 LED solid = straight, blinking = bend; prompts also arrive as `log` messages).
+  Saved on the board.
+- Testing without the app: open `http://<glove IP>` on the hotspot phone (the glove prints its IP on USB serial);
+  `http://<glove 1 IP>/?gloves=<glove 2 IP>` shows both gloves on one page.
+- `--own-network` makes a glove host WiFi `BowDuel-P<n>` (192.168.4.1) itself, for tests without a hotspot.
+- `arduino/ap_test/` is a 20-line WiFi check (hosts `BowDuelTest`).
+
+Why Arduino: no phone (iPhone or Android) could join a WiFi network hosted by the MicroPython firmware below, while an
+Arduino-hosted one worked immediately. The MicroPython version (`glove.py`, Pico over USB + `server.py`) is kept for
+bench tests.
+
+---
+
+## MicroPython / Pico bench setup (older; step by step)
 
 Goal: Pico with flex sensor (+ optional IMU) plugged into this Mac over USB → `server.py` → test page in a browser shows the glove live and shoots arrows.
 
@@ -80,7 +103,7 @@ server.py on a laptop  ──WebSocket ws://<laptop-ip>:8000/ws──▶  phone 
 | `index.html` | Browser (served by server.py) | Live sensor readout + 2D mock duel + simulate buttons + Start round countdown |
 | `HANDOFF.md` | (doc) | How the AR app connects: messages, countdown/recenter flow, Swift snippet |
 
-## Switch to the XIAO ESP32-S3
+## XIAO with MicroPython (superseded by the Arduino firmware above)
 
 **Network:** glove 1 creates its own WiFi `BowDuel` (password `bowduel26`); glove 2, the laptop and the phones join it.
 No hotspot or router needed (an iPhone hotspot gave the Mac no IPv4 address, so it couldn't reach the gloves).

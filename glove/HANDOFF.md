@@ -1,72 +1,85 @@
-# Hooking the AR app up to the gloves
+# Hooking the AR app up to a glove
 
-**No laptop in the real game.** Glove 1 creates its own WiFi network and is the hub: it relays every glove
-event to the phones and every phone message to the gloves. (A laptop running `server.py` is only for testing.)
+**One glove per phone, and the phone is the host.** The phone turns on its hotspot, its glove joins it,
+and the glove sends every event straight to the phone. No laptop, no server, no other network.
 
-## 1. Connect
-- Each phone joins WiFi **`BowDuel`**, password **`bowduel26`** (it has no internet; iOS will say so, that's fine).
-- The app opens a WebSocket to **`ws://192.168.4.1/ws`** (fixed address, no discovery needed).
-- Test page in any browser on BowDuel: **http://192.168.4.1**
+## 1. Setup (once per phone)
+- Turn on the phone's **hotspot on 2.4 GHz** (iPhone: Personal Hotspot + **Maximize Compatibility**;
+  Samsung: Mobile Hotspot, band **2.4 GHz**). The glove can't see 5 GHz.
+- Each glove is flashed with its phone's hotspot name and password:
+  `python3 arduino/flash_glove.py --board s3 --player 1 --ssid "<hotspot name>" --password "<password>"`
+- Power the glove: it joins within a few seconds and starts sending. (iPhone: keep the Personal Hotspot
+  screen open while the glove joins, or the hotspot hides itself.)
 
-Every message, both ways, is one JSON object. `p` is the player (1 or 2).
+## 2. Receive events: listen on UDP port 9000
+The glove sends each event as **one UDP datagram** containing **one JSON object** to the phone (the
+hotspot's router address) on port **9000**. Listen on that port; no address needs to be configured.
 
-## 2. What the app receives
 | `t` | Fields | Do this |
 |---|---|---|
 | `release` | `power` 0–1, `pitch`, `roll` (deg, may be null), `held_ms` | **Fire the arrow.** Power = arrow speed |
 | `draw_start` | | Start the bow-draw animation |
 | `draw` | `power` 0–1 (every 50 ms) | Animate the string being pulled |
 | `cancel` | | Fist was too short: stop the draw animation, no arrow |
-| `hb` | `bend`, `state`, `pitch`, `roll`, `imu` (4×/s) | Optional: show the glove is alive |
-| `zero` | `pitch0`, `roll0` | That glove finished recentering |
-| `round_start` | | Someone pressed Start round: show the countdown |
+| `hb` | `bend`, `state`, `pitch`, `roll`, `imu` (4×/s) | Glove is alive (show "connected") |
+| `zero` | `pitch0`, `roll0` | Recenter finished |
+| `calib` | `open`, `fist` (mV) | Flex calibration finished |
+| `log` | `msg` | Status text. Show `CALIBRATE: ...` / `ZERO AIM: ...` messages as prompts to the player |
 
-Aim: **left/right comes from the phone** (where the camera points); the glove can't sense it.
-Up/down: use the glove `pitch` from `release` if it isn't null, otherwise the phone's tilt.
+Every message also has `p` (player 1 or 2). Aim: **left/right comes from the phone** (where the camera
+points); up/down from the glove's `pitch` in `release` if it isn't null, else the phone's tilt.
 
-## 3. What the app sends
-| Message | Effect |
+## 3. Send commands: reply to the glove, UDP port 9000
+Send to **the address the glove's datagrams came from**, port 9000. Plain text is enough:
+
+| Send | Effect |
 |---|---|
-| `{"t":"cmd","p":1,"cmd":"zero"}` | Recenter glove 1: player holds the bow level and still for ~4 s |
-| `{"t":"round_start"}` | Tell the other phone to show the countdown too |
-| `{"t":"hit","p":1,"target":2,"dmg":20}`, `{"t":"reset"}` | Anything else is relayed to every phone: use it to keep both phones' game state in sync |
+| `zero` | **Recenter**: player holds the bow level and still ~4 s (glove ignores draws meanwhile) |
+| `cal` | Recalibrate the flex sensor (straight, then bend; prompts arrive as `log` messages) |
+| `ping` | Glove answers `pong` |
 
-## 4. Round start (countdown + recenter)
-1. Player taps **Start round** (also put a **Recenter** button somewhere in the UI that sends just the `zero` cmd).
-2. App sends `round_start`, then `zero` for p 1 and p 2.
-3. Show "Hold your bow level and still" with 3…2…1 over **4.5 s**. The glove needs about 4 s and ignores
-   draws while it measures. Ignore `release` until the countdown ends.
-4. Show GO. (`zero` replies arrive around 4 s; you can wait for them instead of the timer.)
+(`{"t":"cmd","cmd":"zero"}` works too.)
 
-The test page (http://192.168.4.1, "Start round") does exactly this; open it next to the app to compare.
+**Round start:** show "Hold your bow level and still" with 3…2…1 over **4.5 s**, send `zero` at the start,
+ignore `release` until GO.
 
-## 5. Swift (URLSessionWebSocketTask, no packages)
+## 4. Swift (Network framework, no packages)
 ```swift
-let ws = URLSession.shared.webSocketTask(with: URL(string: "ws://192.168.4.1/ws")!)
-ws.resume()
+import Network
 
-func listen() {
-    ws.receive { result in
-        if case .success(.string(let text)) = result,
-           let m = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-           m["t"] as? String == "release" {
-            let power = m["power"] as? Double ?? 0.5
-            let pitch = m["pitch"] as? Double          // nil without the IMU
-            DispatchQueue.main.async { /* fire arrow for player m["p"] */ }
+let listener = try! NWListener(using: .udp, on: 9000)
+var glove: NWConnection?                       // the glove's address, learned from its first datagram
+
+listener.newConnectionHandler = { conn in
+    glove = conn
+    conn.start(queue: .main)
+    func receive() {
+        conn.receiveMessage { data, _, _, _ in
+            if let data, let m = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               m["t"] as? String == "release" {
+                let power = m["power"] as? Double ?? 0.5
+                let pitch = m["pitch"] as? Double      // nil without the IMU
+                // fire the arrow
+            }
+            receive()
         }
-        listen()                                       // keep receiving
     }
+    receive()
 }
-listen()
+listener.start(queue: .main)
 
-func recenter(player: Int) {
-    ws.send(.string("{\"t\":\"cmd\",\"p\":\(player),\"cmd\":\"zero\"}")) { _ in }
-}
+func recenter() { glove?.send(content: "zero".data(using: .utf8), completion: .contentProcessed { _ in }) }
 ```
-Info.plist: add `NSLocalNetworkUsageDescription` (iOS asks the user for local-network access the first
-time). If the plain `ws://` connection is still refused, also add `NSAppTransportSecurity` →
-`NSAllowsLocalNetworking = YES`.
+Info.plist: add `NSLocalNetworkUsageDescription` (iOS asks for local-network access once).
 
-## 6. Without hardware
-The test page's **Hold to draw** buttons (or keys A / L) send the same `draw_start` / `draw` / `release`
-messages through the server, so the app can be built and tested before the gloves are ready.
+**Android (Kotlin):** `DatagramSocket(9000)`, `receive()` in a background thread, parse the JSON, and reply
+with `socket.send(DatagramPacket(bytes, bytes.size, packet.address, 9000))`.
+
+## 5. Testing without the app
+The glove also serves the test page: open **http://<glove's IP>** in the hotspot phone's browser (the glove
+prints its IP on USB). Both gloves on one hotspot: `http://<glove 1 IP>/?gloves=<glove 2 IP>` shows the
+two-player duel. The test page's **Hold to draw** buttons (keys A / L) simulate a glove without hardware.
+
+## 6. Syncing the two phones
+Each phone only hears its own glove. The two phones keep their cellular internet (they host the hotspot),
+so the app can sync game state (hits, HP, round start) between phones over the internet or GameKit.
