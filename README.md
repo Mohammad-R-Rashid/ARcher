@@ -1,108 +1,131 @@
-# Siege AR
+# ARcher: Siege AR
 
-This is a LiDAR iPhone AR tower-defense game for HackTX 2026. You defend your castle, which sits on a real table, with a bow. An enemy knight works a catapult across the room and lobs fireballs at you.
+**Hold the castle. In your living room. With a real bow glove.**
 
-Built with Unity 6 (6000.6.4f1), URP, AR Foundation 6.6 and ARKit.
+ARcher is an augmented-reality tower-defense game for iPhone, built at **HackTX 2026** for the medieval theme. Point a
+LiDAR iPhone at your floor and a stone castle rises around you, with a whole town spread across the room. You stand on the
+keep like the archer on a Clash Royale princess tower. Across the room, an enemy army sets up camp: trebuchets lob
+flaming boulders at your walls, a battering ram pounds the gate, and soldiers carry ladders up to the battlements.
 
-## Run it on an iPhone
+You fight back with a bow. Draw on the screen, or wear the **bow glove**: clench your fist to draw and open your hand
+to loose.
 
-1. Build the Xcode project. It is already generated in `Build/iOS`. To regenerate it, run Unity's **Siege → Build iOS** menu, or this command:
+---
+
+## The game
+
+| | |
+|---|---|
+| **Your castle** | A full diorama on your real floor: keep, towers, walls, gatehouse, and a town of cottages, market stalls and watchtowers. It's sized to your height, so the battlements sit just below your phone. |
+| **The siege** | Up to three counterweight trebuchets, a siege camp, a knight giving orders, and one escalating raid: dozens of footmen, ladder teams and a ram crew. |
+| **You** | The archer on the keep. Aim with the phone's crosshair, draw, and release. A light pull drops short and a full draw flies true. You can also shoot incoming fireballs out of the air. |
+| **Your allies** | Archers in blue on the towers and gate. They help a little, but you're the main defender. |
+| **Win** | Break the raid. In demo mode the gate and keep take a beating but never fall, so a demo always ends in victory. |
+
+### What makes it feel real
+- **LiDAR-aware battlefield.** The scanned room becomes a walkability map. Furniture, walls and anything overhead are
+  obstacles, and a flood fill from your gate marks which floor is actually reachable. Trebuchets and the camp only set
+  up on open floor, soldiers spawn in front of you and never inside a wall, and raiders path around your couch.
+- **Real occlusion and lighting.** People and furniture hide the castle. The sun matches your room's brightness and
+  colour, and the castle casts shadows onto your real floor.
+- **Physics you can feel.**
+  - Each trebuchet's arm swings because its counterweight drops.
+  - The sling whips round and lets go at the right moment, so the fireball flies a true ballistic arc.
+  - Arrows fly fast and flat, stick where they land, and shatter powder kegs.
+  - Castle sections crumble into rubble.
+- **Haptics on everything** (Core Haptics):
+  - bowstring tension as you draw
+  - a thump when you release
+  - a heartbeat as a fireball closes in
+  - a rumble when a tower collapses
+- **Sound with the ringer off.** Every sound effect is synthesized.
+
+---
+
+## The bow glove
+
+A glove with a flex sensor and an IMU, built on a Seeed XIAO ESP32-S3. It joins the phone's Personal Hotspot and sends
+draw, release and heartbeat messages as JSON over **UDP port 9000**.
+
+- **Draw:** clench your fist. Draw power comes from how far your fingers bend.
+- **Fire:** open your hand.
+- **Touch still works:** whichever starts a draw (glove or touch) owns that shot.
+- **Status:** a line at the top-right shows `Glove: connected · IMU ok`.
+
+The firmware, flashing tool and test page are in [`glove/`](glove/README.md). How the app receives the messages is
+in [`GLOVE_INTEGRATION.md`](GLOVE_INTEGRATION.md) and [`glove/HANDOFF.md`](glove/HANDOFF.md).
+
+---
+
+## How to play
+
+1. Turn on **Personal Hotspot** (Maximize Compatibility) if you're using the glove, and allow **Local Network**
+   access when the app asks.
+2. Hold the phone in landscape and scan the floor until the dots appear.
+3. Stand where you want your tower and tap. The keep rises under your feet, and the castle and town build outward.
+4. The trebuchets roll in and the war horn sounds.
+5. **Hold to draw, then release to fire.** Aim at soldiers carrying ladders, the ram crew, incoming fireballs, the
+   knight, or the powder kegs beside the trebuchets.
+
+---
+
+## Tech
+
+- **Unity 6** (6000.6.4f1), URP, **AR Foundation 6.6 / ARKit**: world tracking, LiDAR scene mesh, environment depth
+  occlusion, light estimation, environment probes.
+- **Procedural content:**
+  - Blender Python scripts model the trebuchet, army, knight, town and arrow on the Kingdom pack's palette atlas.
+  - Python generates the textures and synthesizes every sound.
+  - One editor builder assembles all the prefabs and the scene.
+- **Native iOS plugin:** Core Haptics patterns, plus an audio session that ignores the ringer switch.
+- **Glove:** Arduino firmware on an ESP32-S3, and a C# UDP link with packet-loss handling (`Assets/Siege/Scripts/Glove`).
+- **Assets:** ithappy *Kingdom* (castle, scenery) and *Stylized Newbie Weapons Pack* (bow). Everything else is generated.
+
+### Build and run
+
+1. Regenerate everything from the Unity menu **Siege → Build All**, or headless:
+
+   ```bash
+   /Applications/Unity/Hub/Editor/6000.6.4f1/Unity.app/Contents/MacOS/Unity -batchmode -quit -projectPath . -buildTarget iOS -executeMethod Siege.EditorTools.SiegeAssetBuilder.BuildAll -logFile -
+   ```
+
+2. Build the Xcode project:
 
    ```bash
    /Applications/Unity/Hub/Editor/6000.6.4f1/Unity.app/Contents/MacOS/Unity -batchmode -projectPath . -buildTarget iOS -executeMethod Siege.EditorTools.iOSBuild.Build -logFile -
    ```
 
-2. Open `Build/iOS/Unity-iPhone.xcodeproj`.
-3. On the **Unity-iPhone** target, open **Signing & Capabilities**, choose your Team, and set a unique bundle id if needed.
-4. Plug in a LiDAR iPhone (12 Pro or newer Pro) and press Run.
+3. Open `Build/iOS/Unity-iPhone.xcodeproj`, pick your team, and run on a LiDAR iPhone (12 Pro or newer Pro).
 
-You need landscape orientation and a well-lit room with a table.
+**Playtest without a phone:** run `Siege.EditorTools.SimRunner.Run` with `-siegeAutopilot victory|defeat|obstacles`.
+It plays a full round in a simulated room and saves screenshots.
 
-## How to play
+**Generators:**
+- Blender: `Tools/blender/build_*.py`
+- Textures: `Tools/gen_textures.py`
+- Audio: `Tools/gen_audio.py`
 
-1. **Scan:** move the phone slowly until dots appear on the table or floor.
-2. **Raise your castle:** aim the reticle at the table and tap.
-3. **Place the enemy:** aim across the room, at least 0.7 m away, and tap. "PLACE IT FOR ME" drops the catapult 1.6 m away on whatever surface is there.
-4. The castle builds itself, the catapult rolls in, and the war horn sounds.
-5. **Shoot:** press anywhere and drag down to draw, aim with the phone (crosshair), and release to fire. A dotted arc previews the shot.
-6. **Hit targets:** hits on the catapult splinter wood. Knight hits do double damage. The powder kegs beside the catapult explode for big damage.
-7. **Win** by breaking the catapult. **Lose** when the keep (central tower with the crown) falls.
+**Tuning:** gameplay numbers are in `Assets/Siege/Scripts/Core/Damage.cs` (`Tune`). Set `DemoNoLoss = false` to allow
+real defeats.
 
-## Testing without a phone
+### Code map (`Assets/Siege/Scripts`)
+- **Game:**
+  - `GameManager`: game flow and LiDAR placement.
+  - `NavGrid`: room walkability and pathfinding.
+  - `Castle` and `CastlePiece`.
+  - `Trebuchet`.
+  - `WaveManager`, `Soldier`, `SiegeLadder`, `BatteringRam`.
+  - `Defender`, `Knight`, `Fireball`.
+- **Player:**
+  - `BowController`: aiming, aim assist and firing.
+  - `BowBender`: real limb bend.
+  - `Arrow`.
+  - `TouchBowInput`.
+- **Glove:** `GloveLink`, `GloveUdp`, `GloveBowInput`, `CombinedBowInput`, `GloveSetup`, `GloveStatusUI`.
+- **FX and Core:** `VFX`, `ScreenFX`, `MeshFracture`, `Haptics`, `Sfx`.
 
-In the Editor, press Play on `Assets/Siege/Scenes/Main.unity`. It runs a simulated room:
+---
 
-- **Left-drag:** draw and loose the bow.
-- **Right-drag:** look around.
-- **Scroll:** move the camera forward or back.
+## Team
 
-Headless play-through, which writes screenshots to `/tmp/claude-501/previews/sim_*.png`:
-
-```bash
-Unity -batchmode -projectPath . -executeMethod Siege.EditorTools.SimRunner.Run -siegeAutopilot victory -logFile /tmp/sim.log
-```
-
-Use `defeat` instead of `victory` to test the losing path, or `probe` for a quick smoke test.
-
-## Regenerating content
-
-Everything below `Assets/Siege` that isn't a script is generated:
-
-| What | How |
-|---|---|
-| Catapult, knight, bow, arrow models | `Blender -b -P Tools/blender/build_models.py -- "$PWD"` |
-| FX and UI textures | `python3 Tools/gen_textures.py "$PWD"` |
-| All sound effects | `python3 Tools/gen_audio.py "$PWD"` |
-| Materials, prefabs, scene, layers, project settings | Unity menu **Siege → Build All** (`Siege.EditorTools.SiegeAssetBuilder.BuildAll`) |
-
-The models use UVs that point into the Kingdom pack's palette atlas. That keeps everything on one material, so it matches the pack's style and renders cheaply.
-
-## Code map (`Assets/Siege/Scripts`)
-
-- **Game**
-  - `GameManager`: the flow (scan → place → intro → battle → win/lose).
-  - `Castle` and `CastlePiece`: destructible sections, the castle-builds-itself intro and the collapse.
-  - `Catapult`: crank, aim, fire, and damage / break-apart.
-  - `Knight`: procedural animation and ragdoll.
-  - `Fireball`, `TNTBarrel`, `LandingMarker`.
-- **Player**
-  - `BowController`: the on-screen bow, string, limb bend and aim arc.
-  - `Arrow`: swept flight, sticking, and hit reactions.
-  - `IBowInput` and `TouchBowInput`.
-- **FX**
-  - `VFX`: pooled particle effects built in code (explosions, fire, smoke, dust, splinters, fireworks).
-  - `ScreenFX`: shake, vignette/chromatic aberration punch, heat flash, slow-mo.
-  - `MeshFracture` and `Debris`.
-- **Core**
-  - `Haptics`: every Core Haptics pattern. The native side is `Assets/Plugins/iOS/SiegeHaptics.mm`.
-  - `Sfx`: pooled 3D audio.
-  - `Damage`: layers and the `Tune` gameplay numbers.
-- **AR**
-  - `ARSurface`: grid while placing, then an invisible shadow catcher with colliders on planes and the LiDAR mesh.
-  - `ARLightMatch`.
-  - `SimCameraRig`.
-
-The world is game-scale. The XR Origin is scaled to 55 units per real metre, so physics behaves like a full-size castle. AR Foundation corrects LiDAR occlusion for that scale.
-
-## Hooking up the IMU glove later
-
-Implement `IBowInput` with these members:
-
-- `Draw`: 0 to 1.
-- `Drawing`
-- `ReleasedThisFrame`
-- `AimDirection`: optional world-space aim. Return `null` to keep aiming with the phone camera.
-
-Then call `GameManager.Instance.bow.SetInput(yourGloveInput)`. Nothing else needs to change. Haptics, the aim arc, sounds and damage all read from the bow.
-
-## Tuning
-
-Gameplay numbers are in `Tune` (`Scripts/Core/Damage.cs`): catapult health, reload time, arrow speed, near-miss frequency and so on.
-
-World scale and catapult distance are on the `Game` object (`GameManager`): `unitsPerMeter`, `catapultScale` and `autoCatapultDistanceM`.
-
-## Assets
-
-- The castle, scenery, kegs, coins, crown, flags and rubble come from **ithappy Kingdom (Unity 6)**.
-- The catapult, knight, bow and arrow are custom procedural models.
-- The Stylized Newbie Weapons Pack is linked to the Asset Store account but isn't downloaded into this project. To use its bow, import it through Package Manager → My Assets, then swap the meshes in `Prefabs/BowRig.prefab` (keep the `Limb_Top`, `Limb_Bottom` and tip transforms).
+Built in a weekend at HackTX 2026 by **Mohammad Rashid**, **Bilal Shihab** and **Jay Damodaran**.
