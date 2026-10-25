@@ -43,6 +43,7 @@ GameObject:
   m_Component:
   - component: {fileID: 7398244032794431076}
   - component: {fileID: 1188024470655997743}
+  - component: {fileID: 4440764878863538710}
   m_Layer: 0
   m_Name: Bow_Newbie_03
   m_TagString: Untagged
@@ -129,6 +130,23 @@ SkinnedMeshRenderer:
     m_Center: {x: -0.0021442277, y: 0.19057378, z: 0}
     m_Extent: {x: 0.032489203, y: 0.21718997, z: 0.6428297}
   m_DirtyAABB: 0
+--- !u!114 &4440764878863538710
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 874138138854278475}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: fe10f837af1a74d50872b658a075489f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Siege.BowBender
+  source: {fileID: 1188024470655997743}
+  tipFlex: 0.16
+  tipPinch: 0.05
+  stringPull: 0.5
+  gripHalf: 0.12
 --- !u!1 &1380980037390788890
 GameObject:
   m_ObjectHideFlags: 0
@@ -315,7 +333,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 0.12, y: 0.12, z: 0.12}
+  m_LocalScale: {x: 0.3, y: 0.3, z: 0.3}
   m_ConstrainProportionsScale: 0
   m_Children:
   - {fileID: 7174457547807122740}
@@ -339,18 +357,19 @@ MonoBehaviour:
   limbTop: {fileID: 3588742453867217530}
   limbBottom: {fileID: 668822772916337069}
   stringBone: {fileID: 6435122296830452131}
+  bender: {fileID: 4440764878863538710}
   nockedArrow: {fileID: 5935217502110521422}
   arrowPrefab: {fileID: 0}
   trajectory: {fileID: 0}
   inputSource: {fileID: 0}
-  viewportAnchor: {x: 0.8, y: 0.3}
-  viewDepth: 0.35
-  restEuler: {x: 4, y: -10, z: 24}
+  viewportAnchor: {x: 0.78, y: 0.3}
+  viewDepth: 0.6
   drawBack: 0.38
   limbBend: 14
-  arrowScale: 0.77
-  assistAngle: 4
-  minDrawToFire: 0.3
+  cant: 14
+  arrowScale: 2.2
+  assistAngle: 2.5
+  minDrawToFire: 0.04
 --- !u!1 &9170014924482413750
 GameObject:
   m_ObjectHideFlags: 0

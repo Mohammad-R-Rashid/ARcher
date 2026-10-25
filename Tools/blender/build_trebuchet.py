@@ -6,6 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from siege_common import *   # noqa: F401,F403  (palette, primitives, join/empty/export)
 import bmesh, math
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 # Convention: Blender +Y = front (towards the castle), +Z = up, metres. The arm is modelled horizontal.
 AXLE = Vector((0, 0, 9.0))
@@ -72,7 +73,14 @@ def loop_tube(points, r, color, res=1, cyclic=True):
     bpy.context.scene.collection.objects.link(o)
     activate(o)
     bpy.ops.object.convert(target="MESH")
-    return finish(bpy.context.active_object, color, 0)
+    o = bpy.context.active_object
+    if not cyclic:   # weld the end caps onto the tube
+        bm = bmesh.new()
+        bm.from_mesh(o.data)
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-4)
+        bm.to_mesh(o.data)
+        bm.free()
+    return finish(o, color, 0)
 
 def lash(center, direction, w, d, turns=3, spacing=0.09, r=0.042, color="rope", n=12):
     """Rope turns hugging a w x d rectangular beam (same local axes as timber())."""
@@ -402,11 +410,13 @@ def build_pouch():
                        0.035, "wood_deep"))
     for sy in (-1, 1):
         p.append(torus(0.07, 0.02, (0, c.y + sy * 0.53, rim + 0.03), "iron", rot=(0, 90, 0), seg=10, minor_seg=6))
-    for sx in (-1, 1):   # stitched seams following the dome's underside
+    me = p[0].data   # stitched seams laid onto the faceted leather underside
+    tree = BVHTree.FromPolygons([v.co for v in me.vertices], [f.vertices for f in me.polygons])
+    for sx in (-1, 1):
         pts = []
         for k in range(9):
-            y = (k / 4 - 1) * 0.40
-            pts.append((sx * 0.16, c.y + y, rim - 0.26 * math.sqrt(max(0.0, 1 - (0.16 / 0.36) ** 2 - (y / 0.475) ** 2)) - 0.01))
+            hit = tree.ray_cast(Vector((sx * 0.16, c.y + (k / 4 - 1) * 0.38, c.z - 1)), Vector((0, 0, 1)))[0]
+            pts.append(hit + Vector((0, 0, -0.004)))
         p.append(loop_tube(pts, 0.012, "wood_deep", cyclic=False))
     join(p, "Pouch", c, smooth_angle=SMOOTH)
 

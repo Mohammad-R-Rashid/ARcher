@@ -16,6 +16,7 @@ namespace Siege
         public float radius = 0.1f;            // sweep radius at model scale (about 8 cm on a 0.9 m arrow)
         public float tipLength = 1.05f;
         public float shootDownRadius = 1.4f;   // passing this close to a fireball's centre bursts it
+        [HideInInspector] public bool fromPlayer = true;   // allied archers' arrows give the player no feedback
 
         Vector3 m_Vel;
         float m_Power = 1f;
@@ -154,21 +155,25 @@ namespace Siege
                 else
                 {
                     Sfx.Play(Sound.ArrowHitWood, hit.point, 1f, 0.12f);
-                    Haptics.ArrowHitWood();
+                    if (fromPlayer) Haptics.ArrowHitWood();
                     VFX.Splinters(hit.point, hit.normal, 0.9f);
                 }
                 if (dmg != null)
                 {
-                    Sfx.Play(Sound.HitMarker, hit.point, 0.5f, 0.05f, 0.3f);
-                    if (!(dmg is Soldier)) Haptics.HitConfirm();   // soldiers confirm their own kills
+                    if (fromPlayer)
+                    {
+                        Sfx.Play(Sound.HitMarker, hit.point, 0.5f, 0.05f, 0.3f);
+                        if (!(dmg is Soldier)) Haptics.HitConfirm();   // soldiers confirm their own kills
+                    }
+                    else info.power = -1f;   // marks an allied arrow: no kill haptic for the player
                     dmg.TakeHit(info);
-                    BowController.NotifyHit(dmg);
+                    if (fromPlayer) BowController.NotifyHit(dmg);
                 }
             }
             else if (layer == Layers.Castle)
             {
                 Sfx.Play(Sound.ArrowHitStone, hit.point, 0.7f, 0.15f);
-                Haptics.ArrowHitStone();
+                if (fromPlayer) Haptics.ArrowHitStone();
                 VFX.StoneChips(hit.point, hit.normal, 0.5f);
             }
             else

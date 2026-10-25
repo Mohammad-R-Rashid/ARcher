@@ -20,12 +20,12 @@ namespace Siege
 
         [Header("World scale: game units per real metre")]
         public float unitsPerMeter = 12f;         // recomputed at placement from your real phone height
-        public float minCatapultDistanceM = 2.2f;
-        public float autoCatapultDistanceM = 5f; // enemy is placed straight ahead, clipped by walls (LiDAR)
+        public float minCatapultDistanceM = 2.4f;
+        public float autoCatapultDistanceM = 3.8f; // enemy is placed straight ahead, clipped by walls (LiDAR)
 
         [Header("Standing on your tower")]
         public float keepTopUnits = 12.6f;          // height of the keep's battlements in castle units
-        public float eyeAboveKeepM = 0.45f;         // phone sits this far above the battlements
+        public float eyeAboveKeepM = 0.28f;         // you stand in the tower: battlements just below the phone
         public float keepOffsetUnits = 7f;          // the keep (your tower) sits at the back of the castle
 
         [Header("AR")]
@@ -60,11 +60,17 @@ namespace Siege
         public bool Simulated { get; private set; }
         public bool IsPlacing => State == Phase.Scanning || State == Phase.PlaceCastle || State == Phase.PlaceCatapult;
         public Castle Castle { get; private set; }
-        public Trebuchet Trebuchet { get; private set; }
+        // Non-null while ARKit has lost tracking (fast motion, covered lens): a short note for the player.
+        public string TrackingProblem => Simulated || ARSession.state == ARSessionState.SessionTracking || ARSession.state < ARSessionState.SessionInitializing ? null : "Move slower - finding the room";
+        public Trebuchet Trebuchet { get; private set; }               // the centre engine (HUD bar, autopilot)
+        public readonly List<Trebuchet> Trebuchets = new List<Trebuchet>();
+        public int trebuchetCount = 3;
+        public float flankAngle = 40f;                                  // side engines sit this far round the castle
 
         Pose m_CastlePose, m_CatapultPose;
         GameObject m_Camp;
         Vector3 m_PlayerGround;
+        bool m_FootprintClear = true;
         bool m_HasReticle;
         Pose m_ReticlePose;
         readonly List<ARRaycastHit> m_Hits = new List<ARRaycastHit>();
@@ -203,14 +209,17 @@ namespace Siege
             var footprintCenter = m_ReticlePose.position + m_ReticlePose.forward * keepOffsetUnits * unitsPerMeter / newUpm;
             reticle.SetPositionAndRotation(footprintCenter + Vector3.up * 0.05f * unitsPerMeter, m_ReticlePose.rotation);
             reticle.localScale = Vector3.one * 28f * (unitsPerMeter / newUpm) * (1f + 0.03f * Mathf.Sin(Time.time * 5f));
+            // LiDAR: is the castle's footprint clear, flat floor? (checked a few times a second)
+            if (Time.frameCount % 10 == 0)
+                m_FootprintClear = NavGrid.AreaClear(footprintCenter, 12f * unitsPerMeter / newUpm, 0.06f * unitsPerMeter, 1.6f * unitsPerMeter);
             if (reticleRenderer)
             {
                 var mpb = new MaterialPropertyBlock();
-                mpb.SetColor("_Tint", new Color(1.6f, 1.3f, 0.6f, 1));
+                mpb.SetColor("_Tint", m_FootprintClear ? new Color(1.6f, 1.3f, 0.6f, 1) : new Color(2f, 0.6f, 0.15f, 1));
                 reticleRenderer.SetPropertyBlock(mpb);
             }
             float h = (c.y - floorY) / unitsPerMeter;
-            hud.SetPlacementWarning(h < 0.7f ? "Stand up and hold the phone at chest height" : null);
+            hud.SetPlacementWarning(h < 0.7f ? "Stand up and hold the phone at chest height" : !m_FootprintClear ? "Furniture in the way - step to open floor" : null);
         }
 
         // World scale that puts the keep's battlements just below the phone.
@@ -254,14 +263,35 @@ namespace Siege
             if (fwd.sqrMagnitude < 0.001f) fwd = Vector3.forward;
             fwd.Normalize();
             float m = unitsPerMeter;
-            float dist = autoCatapultDistanceM * m;
             int env = 1 << Layers.Environment;
             var eye = m_CastlePose.position + Vector3.up * 0.3f * m;
-            if (!Simulated && Physics.Raycast(eye, fwd, out var wall, dist + 0.6f * m, env))
-                dist = Mathf.Max(minCatapultDistanceM * m, wall.distance - 0.6f * m);
-            var pos = m_CastlePose.position + fwd * dist;
-            if (!Simulated && Physics.Raycast(pos + Vector3.up * 1.5f * m, Vector3.down, out var ground, 3f * m, env))
-                pos = ground.point;
+            Vector3 Candidate(Vector3 dir, float dist)
+            {
+                if (!Simulated && Physics.Raycast(eye, dir, out var wall, dist + 0.6f * m, env))
+                    dist = Mathf.Max(minCatapultDistanceM * m, wall.distance - 0.6f * m);
+                var p = m_CastlePose.position + dir * dist;
+                if (!Simulated && Physics.Raycast(p + Vector3.up * 1.5f * m, Vector3.down, out var ground, 3f * m, env)) p = ground.point;
+                return p;
+            }
+            var pos = Candidate(fwd, autoCatapultDistanceM * m);
+            // LiDAR walkability map of the room: the trebuchet (and later the camp) must stand on open floor
+            // that raiders can actually walk from to the gate - not in a wall, behind one, or under a table.
+            Physics.SyncTransforms();
+            var gateApproach = m_CastlePose.position + fwd * 17f;
+            var grid = NavGrid.Build(m_CastlePose.position, m_CastlePose.position + fwd * autoCatapultDistanceM * m, 28f, 1.5f, m,
+                                     m_CastlePose.position.y, gateApproach);
+            bool found = false;
+            foreach (var yaw in new[] { 0f, -12f, 12f, -24f, 24f, -36f, 36f })
+            {
+                var dir = Quaternion.Euler(0, yaw, 0) * fwd;
+                for (float dm = autoCatapultDistanceM; dm >= minCatapultDistanceM && !found; dm -= 0.4f)
+                {
+                    var p = Candidate(dir, dm * m);
+                    if (grid.AreaOpen(p, EngineClear)) { pos = p; found = true; }
+                }
+                if (found) break;
+            }
+            if (!found && grid.TryOpenSpot(pos, 45f, EngineClear, out var spot, InFront)) pos = spot;
             PlaceCatapult(new Pose(pos, Quaternion.identity));
         }
 
@@ -285,6 +315,8 @@ namespace Siege
         public void PlayAgain()
         {
             if (State == Phase.Intro) return;
+            // In AR every new round starts with re-placing the castle (fresh scan, better spot).
+            if (!Simulated) { Replace(); return; }
             StopAllCoroutines();
             Cleanup();
             Time.timeScale = 1f;
@@ -295,7 +327,8 @@ namespace Siege
         {
             if (Castle) Destroy(Castle.gameObject);
             if (waves) waves.Stop();
-            if (Trebuchet) Destroy(Trebuchet.gameObject);
+            foreach (var t in Trebuchets) if (t) Destroy(t.gameObject);
+            Trebuchets.Clear();
             if (m_Camp) Destroy(m_Camp);
             foreach (var s in FindObjectsByType<Soldier>(FindObjectsInactive.Include)) Destroy(s.gameObject);
             foreach (var d in FindObjectsByType<Debris>(FindObjectsInactive.Exclude)) Destroy(d.gameObject);
@@ -315,18 +348,39 @@ namespace Siege
             var castleRot = Quaternion.LookRotation(toCat.sqrMagnitude > 0.01f ? toCat.normalized : Vector3.forward);
             Castle = Instantiate(castlePrefab, m_CastlePose.position, castleRot);
             var trebRot = Quaternion.LookRotation(-(castleRot * Vector3.forward));
-            Trebuchet = Instantiate(trebuchetPrefab, m_CatapultPose.position, trebRot);
-            if (Trebuchet.knight) Trebuchet.knight.lookTarget = Castle.keep ? Castle.keep.transform : Castle.transform;
+            Trebuchet = SpawnTrebuchet(m_CatapultPose.position);
+            // A battery of engines: flanking trebuchets on open floor either side of the centre one.
+            var castlePos = m_CastlePose.position;
+            for (int i = 1; i < trebuchetCount; i++)
+            {
+                float ang = flankAngle * ((i + 1) / 2) * (i % 2 == 1 ? 1f : -1f);
+                var p = castlePos + Quaternion.Euler(0, ang, 0) * (m_CatapultPose.position - castlePos);
+                if (Physics.Raycast(p + Vector3.up * 30f, Vector3.down, out var gp, 80f, 1 << Layers.Environment)) p.y = gp.point.y;
+                var grid = NavGrid.Current;
+                var fwdC = castleRot * Vector3.forward;
+                bool Spaced(Vector3 q) => Vector3.Dot(q - castlePos, fwdC) > 20f && Trebuchets.TrueForAll(t => !t || Flat(t.transform.position - q).magnitude > 20f);
+                if (grid != null && (!grid.AreaOpen(p, EngineClear) || !Spaced(p)))
+                    if (!grid.TryOpenSpot(p, 22f, EngineClear, out p, Spaced)) continue;   // no room for another engine: fewer, not jammed
+                SpawnTrebuchet(p);
+            }
             if (campPrefab)
             {
-                var campPos = m_CatapultPose.position + (trebRot * Vector3.right) * 15f + (trebRot * Vector3.forward) * 4f;
-                if (Physics.Raycast(campPos + Vector3.up * 30f, Vector3.down, out var g, 80f, 1 << Layers.Environment)) campPos.y = g.point.y;
+                // LiDAR: put the camp on whichever flank has clear floor.
+                Vector3 campPos = Vector3.zero; bool ok = false;
+                foreach (var (side, back) in new[] { (15f, 4f), (-15f, 4f), (0f, -14f), (9f, -14f), (-9f, -14f), (0f, -20f) })
+                {
+                    var p = m_CatapultPose.position + (trebRot * Vector3.right) * side + (trebRot * Vector3.forward) * back;
+                    if (Physics.Raycast(p + Vector3.up * 30f, Vector3.down, out var g, 80f, 1 << Layers.Environment)) p.y = g.point.y;
+                    bool clearOfEngines = Trebuchets.TrueForAll(t => !t || Flat(t.transform.position - p).magnitude > 17f);
+                    if (clearOfEngines && InFront(p) && (NavGrid.Current == null || NavGrid.Current.AreaOpen(p, 0.75f * unitsPerMeter))) { campPos = p; ok = true; break; }
+                    if (side == 15f) campPos = p;
+                }
+                if (!ok && NavGrid.Current != null && NavGrid.Current.TryOpenSpot(campPos, 40f, 0.6f * unitsPerMeter, out var open, InFront)) campPos = open;
                 m_Camp = Instantiate(campPrefab, campPos, trebRot);
             }
             Castle.KeepDestroyed += OnDefeat;
-            Trebuchet.Destroyed += OnTrebuchetDestroyed;
-            Trebuchet.Hit += hud.OnCatapultHit;
-            Castle.PieceDestroyed += _ => { hud.OnCastleDamaged(); if (Trebuchet && Trebuchet.knight) Trebuchet.knight.Cheer(); };
+
+            Castle.PieceDestroyed += _ => { hud.OnCastleDamaged(); foreach (var t in Trebuchets) if (t && t.knight) t.knight.Cheer(); };
             hud.SetTargets(Castle, Trebuchet);
 
             if (Simulated && simRig)
@@ -339,6 +393,7 @@ namespace Siege
 
             var castleIntro = StartCoroutine(Castle.BuildIntro());
             yield return new WaitForSeconds(0.5f);
+            for (int i = 1; i < Trebuchets.Count; i++) StartCoroutine(Trebuchets[i].RollIn(30f, 2.6f));
             yield return Trebuchet.RollIn(30f, 2.6f);
             yield return castleIntro;
             Sfx.Play2D(Sound.WarHorn, 0.9f);
@@ -346,7 +401,13 @@ namespace Siege
             hud.Banner("DEFEND!", "", new Color(1f, 0.82f, 0.35f), 1.4f);
             yield return new WaitForSeconds(1.2f);
             Enter(Phase.Battle);
-            Trebuchet.Begin(Castle, cam.transform);
+            // LiDAR walkability map of the battlefield (castle and town are standing now): raiders route around furniture.
+            Physics.SyncTransforms();
+            var gate = Castle.Gate;
+            var approach = (gate ? gate.WorldBounds.center : Castle.transform.position) + Castle.transform.forward * 9f;
+            NavGrid.Build(Castle.transform.position, m_Camp ? m_Camp.transform.position : Trebuchet.transform.position, 25f, 1.5f,
+                          unitsPerMeter, Castle.transform.position.y, approach);
+            for (int i = 0; i < Trebuchets.Count; i++) StartCoroutine(BeginEngine(Trebuchets[i], i * 1.7f));
             if (waves)
             {
                 waves.WaveStarted -= OnWaveStarted; waves.WaveStarted += OnWaveStarted;
@@ -356,11 +417,40 @@ namespace Siege
             }
         }
 
+        // A trebuchet is ~20 game m long: keep a real ~1.1 m of clear floor around its centre.
+        float EngineClear => 1.1f * unitsPerMeter;
+
+        // Well out in front of the castle (toward the enemy), never beside or behind the player.
+        bool InFront(Vector3 q)
+        {
+            var f = m_CastlePose.rotation * Vector3.forward;   // the direction you faced when placing the castle
+            f.y = 0; f.Normalize();
+            return Vector3.Dot(q - m_CastlePose.position, f) > minCatapultDistanceM * unitsPerMeter * 0.8f;
+        }
+
+        Trebuchet SpawnTrebuchet(Vector3 pos)
+        {
+            var face = Flat(m_CastlePose.position - pos);
+            var t = Instantiate(trebuchetPrefab, pos, Quaternion.LookRotation(face.sqrMagnitude > 0.01f ? face.normalized : Vector3.back));
+            if (t.knight) t.knight.lookTarget = Castle.keep ? Castle.keep.transform : Castle.transform;
+            t.Destroyed += OnTrebuchetDestroyed;
+            t.Hit += hud.OnCatapultHit;
+            Trebuchets.Add(t);
+            return t;
+        }
+
+        // Staggered so the battery fires a ragged volley rather than in lockstep.
+        IEnumerator BeginEngine(Trebuchet t, float delay)
+        {
+            yield return new WaitForSeconds(delay);
+            if (t && State == Phase.Battle) t.Begin(Castle, cam.transform);
+        }
+
         void OnWaveStarted(int wave)
         {
             if (State != Phase.Battle) return;
             Sfx.Play2D(Sound.WarHorn, 0.7f);
-            hud.Banner($"WAVE {wave}", "", new Color(1f, 0.55f, 0.35f), 1.2f);
+            hud.Banner(waves && waves.WaveCount > 1 ? $"WAVE {wave}" : "HERE THEY COME", "", new Color(1f, 0.55f, 0.35f), 1.2f);
         }
 
         void OnGateBreached()
@@ -382,7 +472,7 @@ namespace Siege
         {
             if (State != Phase.Battle) return;
             Enter(Phase.Victory);
-            if (Trebuchet) Trebuchet.Stop();
+            foreach (var t in Trebuchets) if (t) t.Stop();
             StartCoroutine(VictoryRoutine());
         }
 
@@ -412,12 +502,12 @@ namespace Siege
 
         IEnumerator DefeatRoutine()
         {
-            if (Trebuchet) Trebuchet.Stop();
+            foreach (var t in Trebuchets) if (t) t.Stop();
             ScreenFX.SlowMo(0.3f, 1.4f);
             ScreenFX.Damage(1f);
             Haptics.Collapse();
             yield return Castle.CollapseAll();
-            if (Trebuchet && Trebuchet.knight) Trebuchet.knight.Cheer();
+            foreach (var t in Trebuchets) if (t && t.knight) t.knight.Cheer();
             Sfx.Play2D(Sound.Defeat, 0.9f);
             hud.Banner("DEFEAT", "", new Color(1f, 0.4f, 0.3f), 0f);
         }

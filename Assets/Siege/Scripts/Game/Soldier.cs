@@ -35,15 +35,19 @@ namespace Siege
         public bool Moving => m_Moving;
         public bool Clambering { get; private set; }
         public bool Spearman => m_Spear;
+        public bool Exposed { get; private set; } = true;   // the player has a line of sight to him (else aim assist ignores him)
         public static IReadOnlyList<Soldier> Living => s_Living;
 
         const int GroundMask = 1 << Layers.Environment;
+        const int CastleMask = 1 << Layers.Castle;
+        const float TorsoAim = 1.2f, HeadAim = 1.65f;
         static readonly List<Soldier> s_Living = new List<Soldier>();
 
         State m_State = State.Idle;
-        float m_StateTime, m_CheerUntil = -1f;
+        float m_StateTime, m_CheerUntil = -1f, m_NextSight;
         bool m_Gone, m_Rigged, m_Spear;
         AimTarget m_Aim;
+        Collider[] m_Parts;
 
         Quaternion m_HipsR, m_TorsoR, m_HeadR, m_ArmLR, m_ArmRR, m_LegLR, m_LegRR, m_WeaponR, m_ShieldR;
         Vector3 m_HipsP, m_BaseScale = Vector3.one;
@@ -112,8 +116,14 @@ namespace Siege
                 cap.height = 1.8f;
                 cap.radius = 0.3f;
             }
+            m_Parts = GetComponentsInChildren<Collider>(true);
+            // A moving man is a kinematic body, not a static collider PhysX has to rebuild every frame.
+            var rb = GetComponent<Rigidbody>();
+            if (!rb) rb = gameObject.AddComponent<Rigidbody>();
+            rb.isKinematic = true;
+            rb.interpolation = RigidbodyInterpolation.None;
             m_Aim = gameObject.AddComponent<AimTarget>();
-            m_Aim.offset = new Vector3(0f, 1.2f, 0f);
+            m_Aim.offset = new Vector3(0f, TorsoAim, 0f);
             m_FaceLocal = transform.parent ? transform.parent.InverseTransformDirection(transform.forward) : transform.forward;
             m_LastPos = transform.position;
         }
@@ -217,6 +227,7 @@ namespace Siege
             if (!Alive) return;
             m_Gone = true;
             m_Moving = false;
+            Exposed = false;
             s_Living.Remove(this);
             if (m_Aim) m_Aim.enabled = false;
             foreach (var c in GetComponentsInChildren<Collider>()) c.enabled = false;
@@ -242,7 +253,7 @@ namespace Siege
             health = 0f;   // a footman goes down to any arrow, fireball or blast
             bool arrow = hit.source == HitSource.Arrow;
             var dir = hit.direction.sqrMagnitude > 1e-4f ? hit.direction.normalized : -transform.forward;
-            if (arrow) Haptics.HitConfirm();
+            if (arrow && hit.power >= 0f) Haptics.HitConfirm();   // allied archers' kills (power < 0) don't buzz the player
             Die(hit.point - dir * 2f, arrow ? Mathf.Clamp(hit.force, 2.5f, 6f) : Mathf.Max(hit.force, 9f));
         }
 
@@ -255,6 +266,7 @@ namespace Siege
             m_StateTime = 0f;
             health = 0f;
             m_Moving = false;
+            Exposed = false;
             s_Living.Remove(this);
             if (m_Aim) m_Aim.enabled = false;
             var src = Sfx.Play(Sound.KnightGrunt, head ? head.position : transform.position, 0.75f, 0.08f);
@@ -295,6 +307,12 @@ namespace Siege
             var box = gameObject.AddComponent<BoxCollider>();
             box.center = new Vector3(0f, 0.85f, 0f);
             box.size = new Vector3(0.5f, 1.7f, 0.34f);
+            // fall among the living rather than being propped up on the men around him
+            foreach (var o in s_Living)
+            {
+                if (!o || o.m_Parts == null || (o.transform.position - transform.position).sqrMagnitude > 16f) continue;
+                foreach (var c in o.m_Parts) if (c) Physics.IgnoreCollision(box, c);
+            }
             var rb = GetComponent<Rigidbody>();
             if (!rb) rb = gameObject.AddComponent<Rigidbody>();
             rb.isKinematic = false;
@@ -354,7 +372,30 @@ namespace Siege
                 var want = Quaternion.LookRotation(face.normalized) * Quaternion.Euler(bodyPitch, 0f, 0f);
                 transform.rotation = Quaternion.Slerp(transform.rotation, want, 1f - Mathf.Exp(-9f * dt));
             }
+            UpdateSight();
         }
+
+        // Aim assist only locks onto men the player can actually see: the torso, else the head (a crowd under
+        // the gate wall, a climber at the parapet), else nothing. Arrows still fly wherever they're aimed.
+        void UpdateSight()
+        {
+            if (!m_Aim || Time.time < m_NextSight) return;
+            m_NextSight = Time.time + Random.Range(0.15f, 0.3f);
+            var gm = GameManager.Instance;
+            var cam = gm && gm.cam ? gm.cam : Camera.main;
+            float aim = TorsoAim;
+            if (cam)
+            {
+                var eye = cam.transform.position;
+                if (Blocked(TorsoAim, eye)) aim = Blocked(HeadAim, eye) ? 0f : HeadAim;
+            }
+            Exposed = aim > 0f;
+            if (Exposed) m_Aim.offset = new Vector3(0f, aim, 0f);
+            if (m_Aim.enabled != Exposed) m_Aim.enabled = Exposed;
+        }
+
+        bool Blocked(float height, Vector3 eye) =>
+            Physics.Linecast(transform.TransformPoint(new Vector3(0f, height, 0f)), eye, CastleMask, QueryTriggerInteraction.Ignore);
 
         Vector3 Locomote(Vector3 pos, float dt, float s)
         {
@@ -562,14 +603,15 @@ namespace Siege
                 }
                 case State.Climb:
                 {
-                    // alternate arm and leg, one rung pair per 0.7 m climbed
+                    // hand over hand, one rung pair per 0.7 m climbed. Fitted to a ~72 degree ladder with the man
+                    // pitched 13 degrees and 0.56 m off it (SiegeLadder): toes on the rungs, hands on the rails.
                     float sc = Mathf.Sin(m_Climbed / 0.7f * Mathf.PI * 2f + m_Offset);
-                    aLp = -122f - sc * 26f; aRp = -122f + sc * 26f;
+                    aLp = -155f - sc * 12f; aRp = -155f + sc * 12f;
                     aLr = 6f; aRr = -6f;
-                    lL = -38f + sc * 26f; lR = -38f - sc * 26f;
-                    tP = 14f; tY = sc * 5f; tR = 0f; hY = 0f; hR = 0f;
+                    lL = -24f + sc * 6f; lR = -24f - sc * 6f;
+                    tP = 24f; tY = sc * 4f; tR = 0f; hY = 0f; hR = 0f;
                     hipsOff = new Vector3(0f, -0.04f, 0.06f);
-                    headP = -18f;
+                    headP = -30f;
                     planted = false;
                     break;
                 }
@@ -628,7 +670,9 @@ namespace Siege
                     else if (p < 0.66f) { float u = (p - 0.5f) / 0.16f; back = 1f - u * u; drive = u; }
                     else { float u = (p - 0.66f) / 0.34f; back = 0.2f * Mathf.Sin(u * Mathf.PI); drive = 1f - u; }
                     float side = squadSide < 0f ? -1f : 1f;
-                    aLp = aRp = -32f + eff * (14f * back - 28f * drive);
+                    // the arms follow the torso so the hands ride the log: with the feet taking 0.8 of the
+                    // swing (BatteringRam), the draw-back moves the grip the remaining ~0.2 m and the lunge none
+                    aLp = aRp = -32f + eff * 14f * back;
                     if (side < 0f) { aRr = 10f; aLr = 26f; } else { aLr = -10f; aRr = -26f; }
                     tP = m_Lean + 6f + eff * (-16f * back + 24f * drive);
                     tY = -side * 10f + tY * (1f - eff);

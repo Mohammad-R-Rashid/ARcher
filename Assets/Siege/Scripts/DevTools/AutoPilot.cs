@@ -29,6 +29,25 @@ namespace Siege
             if (i < 0) return;
             var ap = new GameObject("AutoPilot").AddComponent<AutoPilot>();
             if (i + 1 < args.Length && !args[i + 1].StartsWith("-")) ap.m_Mode = args[i + 1];
+            if (ap.m_Mode == "obstacles") ap.AddFurniture();
+        }
+
+        // Stand-ins for real-room geometry the LiDAR would mesh (Environment layer): a wall across part of the
+        // battlefield, a sofa, and a pillar right where the siege camp would normally go.
+        void AddFurniture()
+        {
+            void Block(Vector3 c, Vector3 size)
+            {
+                var b = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                b.name = "TestObstacle";
+                b.layer = Layers.Environment;
+                b.transform.position = c + Vector3.up * size.y * 0.5f;
+                b.transform.localScale = size;
+            }
+            Block(new Vector3(-14f, 0, 34f), new Vector3(30f, 25f, 1.2f));
+            Block(new Vector3(14f, 0, 44f), new Vector3(9f, 4f, 5f));
+            Block(new Vector3(-15f, 0, 48f), new Vector3(8f, 25f, 8f));
+            m_Mode = "victory";
         }
 
         void OnEnable() => Application.logMessageReceived += OnLog;
@@ -36,7 +55,7 @@ namespace Siege
 
         void OnLog(string msg, string stack, LogType type)
         {
-            if (msg.StartsWith("[ARROW]")) System.Console.WriteLine(msg);
+            if (msg.StartsWith("[ARROW]") || msg.StartsWith("[TREB]")) System.Console.WriteLine(msg);
             if ((type == LogType.Exception || type == LogType.Error) && !stack.Contains("UnityEditor.Search"))
             {
                 m_Errors++;

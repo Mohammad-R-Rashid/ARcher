@@ -41,7 +41,7 @@ namespace Siege
         public float slingLength = 4.5f;    // metres, arm tip to pouch
         public float slingLay = 3.2f;       // metres the loaded pouch lies ahead of the tip, in the trough
         public float releaseAngle = 45f;    // pouch climb angle at which the fireball lets go
-        public float fireballScale = 0.65f;
+        public float fireballScale = 1.7f;   // big enough to track across the room
 
         public float Health { get; private set; }
         public float MaxHealth => Tune.CatapultHealth;
@@ -786,11 +786,23 @@ namespace Siege
         // ---------------------------------------------------------------- siege loop
         IEnumerator SiegeLoop()
         {
-            yield return new WaitForSeconds(0.8f);
+            // The engine arrives as good as loaded: the first winch is a quick top-up so it opens fire almost at once,
+            // then it keeps up a brisk rate.
+            reloadTime = Mathf.Min(reloadTime, 2.6f);
+            // Arrives cocked: arm down on the trough, sling laid out, a fireball already in it.
+            m_Theta = m_ArmTarget = loadedAngle * Mathf.Deg2Rad;
+            m_Omega = 0f;
+            m_Free = false;
+            m_RopeOn = true;
+            m_RopeHook = 1f;
+            m_PouchPin = 1f;
+            ResetSim();
+            bool first = true;
             while (Alive && m_Castle && !m_Castle.Fallen)
             {
-                yield return Reload();
+                if (!first) yield return Reload();
                 if (!Alive) yield break;
+                if (first) { first = false; yield return null; }
                 yield return LoadFireball();
                 // Choose target
                 m_Shots++;
@@ -896,8 +908,11 @@ namespace Siege
             }
             m_PouchPin = 1f;
             if (!fireballPrefab || !pouch) yield break;
-            m_Loaded = Instantiate(fireballPrefab, pouch.TransformPoint(FireballSeat), pouch.rotation, pouch);
-            m_Loaded.transform.localPosition = FireballSeat;
+            // The seat is a world-size offset (game metres) above the pouch: the pouch transform carries the FBX's
+            // import scale, so a raw local offset would put the ball metres away from the sling.
+            var seatWorld = pouch.position + Vector3.up * (FireballSeat.y + 0.4f * fireballScale) * Scale;
+            m_Loaded = Instantiate(fireballPrefab, seatWorld, pouch.rotation, pouch);
+            m_Loaded.transform.localPosition = pouch.InverseTransformPoint(seatWorld);
             m_Loaded.transform.localScale = Vector3.zero;
             var full = Vector3.one * (fireballScale * transform.lossyScale.x / Mathf.Max(0.001f, pouch.lossyScale.x));
             for (float t = 0; t < 0.35f && m_Loaded; t += Time.deltaTime)
@@ -942,7 +957,9 @@ namespace Siege
             m_ShotTarget = target;
             m_ShotPiece = piece;
             m_ShotNearMiss = nearMiss;
+            if (!m_Loaded) yield return LoadFireball();   // never throw an empty sling
             m_ShotPending = m_Loaded != null;
+            if (Arrow.DebugLog) Debug.Log($"[TREB] {transform.position.x:F0} fire loaded={m_Loaded != null} t={Time.time:F1} " + (m_Loaded ? $"active={m_Loaded.gameObject.activeInHierarchy} lossy={m_Loaded.transform.lossyScale.x:F2} pos={m_Loaded.transform.position} pouch={m_PouchPos} rend={m_Loaded.GetComponentInChildren<Renderer>()?.enabled}" : ""));
             m_Released = m_ReleaseNow = m_Caught = m_SlamNow = m_Whooshed = false;
             m_SwingTime = 0f;
             m_PouchPin = m_PouchDraw = 0f;
@@ -967,6 +984,7 @@ namespace Siege
             float T = FlightTime(start, target, m_ReleaseVel);
             var g = Physics.gravity;
             var v = (target - start) / T - 0.5f * g * T;
+            if (Arrow.DebugLog) Debug.Log($"[TREB] release pouchVel={m_ReleaseVel} ({m_ReleaseVel.magnitude:F1}) launch={v} ({v.magnitude:F1}) angle={Vector3.Angle(m_ReleaseVel, v):F0} armDeg={ArmDeg:F0} T={T:F2} pouchToBall={Vector3.Distance(m_PouchPos, start):F2}");
             GameObject marker = null;
             if (!nearMiss && landingMarkerPrefab)
             {
@@ -994,7 +1012,7 @@ namespace Siege
             const int Samples = 48;
             for (int i = 0; i <= Samples; i++)
             {
-                float T = Mathf.Lerp(fallback * 0.6f, fallback * 1.6f, (float)i / Samples);
+                float T = Mathf.Lerp(fallback * 0.6f, fallback * 2.4f, (float)i / Samples);   // a lob when close, so it leaves at sling speed
                 float e = (d / T - 0.5f * g * T - pouchVel).sqrMagnitude;
                 if (e < err) { err = e; best = T; }
             }

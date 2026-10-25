@@ -35,6 +35,9 @@ namespace Siege
         {
             m_Rb = GetComponent<Rigidbody>();
             m_Rb.isKinematic = true;
+            // While it rides in the sling the transform follows its parent; interpolation would keep snapping it
+            // back to the stale rigidbody pose (it looked left behind in the trough). Enabled again at launch.
+            m_Rb.interpolation = RigidbodyInterpolation.None;
         }
 
         public void Launch(Vector3 velocity, float flightTime, Vector3 target, Castle castle, CastlePiece piece,
@@ -53,7 +56,9 @@ namespace Siege
             var col = GetComponent<Collider>();
             col.enabled = true;
             foreach (var c in ignore) if (c) Physics.IgnoreCollision(col, c);
+            m_Rb.position = transform.position;
             m_Rb.isKinematic = false;
+            m_Rb.interpolation = RigidbodyInterpolation.Interpolate;
             m_Rb.useGravity = true;
             m_Rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
             m_Rb.linearVelocity = velocity;
@@ -66,7 +71,7 @@ namespace Siege
             m_Aim.ballistic = true;
             m_Aim.enabled = true;
             if (m_Trail) VFX.Release(m_Trail, 1f);
-            m_Trail = VFX.FireballTrail(transform, 1f);
+            m_Trail = VFX.FireballTrail(transform, 1.4f);   // thick smoke and flame trail: visible across the room
             if (!m_Loop) m_Loop = Sfx.Loop(Sound.FireballLoop, transform, 0.9f);
             Active.Add(this);
         }
