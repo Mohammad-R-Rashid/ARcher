@@ -38,7 +38,9 @@ const int PIN_LED = -1, LED_ON = LOW;                 // no user LED
 
 // ======================= tuning (same as glove.py) =======================
 const uint32_t FULL_DRAW_MS = 1200;   // fist held this long = full power
-const uint32_t MIN_DRAW_MS = 150;     // shorter fists are treated as noise (cancel)
+// Weaker draws are cancelled, not released. In power (not ms) so it follows FULL_DRAW_MS, and it is
+// the same number as the AR app's BowController.minDrawToFire: below it the app would drop the shot.
+const float MIN_DRAW_POWER = 0.30f;
 const uint32_t COOLDOWN_MS = 400;     // min time between shots
 const float CLOSE_AT = 0.60f;         // bend (0=open, 1=fist) that counts as "fist"
 const float OPEN_AT = 0.40f;          // bend that counts as "open" again (hysteresis)
@@ -564,7 +566,7 @@ void loop() {
     float power = std::min(1.0f, held / (float)FULL_DRAW_MS);
     if (b <= OPEN_AT) {
       handState = HAND_OPEN;
-      if (held >= MIN_DRAW_MS) {
+      if (power >= MIN_DRAW_POWER) {
         float p, r;
         bool ok = tiltAgo(RELEASE_LOOKBACK_MS, p, r);
         char ps[12], rs[12];

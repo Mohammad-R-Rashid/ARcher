@@ -207,6 +207,7 @@ function cueFromLog(p, msg) {
 // ------------------------------------------------------------------ simulator (stands in for a glove)
 const sim = { 1: null, 2: null };
 const FULL_DRAW_MS = 1200;
+const MIN_DRAW_POWER = 0.3;   // same rule as the glove firmware: weaker draws cancel
 function simStart(p) {
   if (sim[p]) return;
   const t0 = performance.now();
@@ -219,8 +220,9 @@ function simEnd(p) {
   const s = sim[p]; if (!s) return;
   clearInterval(s.timer); sim[p] = null;
   const held = Math.round(performance.now() - s.t0);
-  if (held < 150) { send({ t: 'cancel', p, src: 'sim' }); return; }
-  send({ t: 'release', p, src: 'sim', power: +Math.min(1, held / FULL_DRAW_MS).toFixed(2), held_ms: held, pitch: null });
+  const power = Math.min(1, held / FULL_DRAW_MS);
+  if (power < MIN_DRAW_POWER) { send({ t: 'cancel', p, src: 'sim' }); return; }
+  send({ t: 'release', p, src: 'sim', power: +power.toFixed(2), held_ms: held, pitch: null });
 }
 const KEYS = { a: 1, l: 2 };
 addEventListener('keydown', e => { const p = KEYS[e.key.toLowerCase()]; if (p && !e.repeat) simStart(p); });

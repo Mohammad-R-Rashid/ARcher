@@ -160,7 +160,7 @@ Glove → server → everyone (`p` = player 1|2, `src` = "usb" | "wifi" | "sim")
 | `draw_start` | | Fist closed (bow drawn) |
 | `draw` | `power` 0–1, `pitch` | Every 50 ms while drawing (animate the bowstring, preview the arc; pitch as in `release`) |
 | `release` | `power` 0–1, `held_ms`, `pitch`, `roll` (deg, null without IMU) | Hand opened → **fire the arrow** |
-| `cancel` | | Fist shorter than 150 ms (noise) |
+| `cancel` | | Draw too weak to shoot: power under 0.3 (fist held < 0.36 s) |
 | `hb` | `bend` 0–1, `state`, `pitch`, `roll`, `imu` | 4×/s heartbeat |
 | `calib` | `open`, `fist` | Calibration done |
 | `zero` | `pitch0`, `roll0` | Aim zeroed (offset now subtracted from every pitch/roll) |
@@ -174,7 +174,7 @@ Phone/page → server:
 ## Game mechanics (as implemented in the mock)
 
 - **Draw**: fist closed. Power ramps 0 → 1 over 1.2 s (`FULL_DRAW_MS`).
-- **Release**: hand opens → arrow fires with that power. Under 150 ms = cancel.
+- **Release**: hand opens → arrow fires with that power. Power under 0.3 (`MIN_DRAW_POWER`, same as the AR app's minimum) = cancel.
 - **Cooldown**: 400 ms between shots.
 - **Aim**: elevation from the glove IMU pitch if present, else from the phone (in AR the phone's camera direction should set aim).
 - **Damage**: 8–25 by power, ×1.5 headshot, 100 HP each.
