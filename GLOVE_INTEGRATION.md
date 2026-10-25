@@ -88,6 +88,32 @@ Build and verify **one at a time**. Numbers match the original plan.
 | 8 | **iOS build** (`Assets/Siege/Editor/iOSBuild.cs`) | Add `NSLocalNetworkUsageDescription` to Info.plist. `GloveUdp`'s first-contact ping should make iOS ask for local-network access early. Plain `ws://` permissions aren't needed (no WebSocket). |
 | — | **Firmware: reply to the last sender** (proposed, not started) | The glove sends events to whoever last sent it a command (for ~10 s), else to the phone. Plus app side: `GloveUdp` pings a configured `gloveAddress` until heard. Enables Unity-editor testing with the real glove and the glove-hosted WiFi fallback. |
 
+## Update 2026-10-25 (Bilal's branch `bilal/glove-arduino`)
+
+**Components 2–8 are written** (on top of Mohammad's `6fa0840`, merged in): `GloveBowInput` (draw-state logic + glove
+bow input, phone / glove-pitch aim modes, lost-release handling), `GloveSetup` (starts itself, no scene edits; glove
+drives the bow while connected, touch otherwise; never mid-draw; leaves AutoPilot alone), `GloveStatusUI` (status line,
+prompts, RECENTER + AIM buttons), `BowController` (glove shots fire at the exact release power; `showArc` re-enables
+the arc and it now matches `Fire`), `iOSBuild` (adds `NSLocalNetworkUsageDescription`).
+**On a phone:** compiles and runs; with board 2 on the iPhone's hotspot the app shows "Glove: connected  IMU ok".
+Drawing/firing with the glove in the Battle phase is **not yet confirmed** (the test stopped at castle placement).
+Note: the bow is only armed in `Phase.Battle`, so the glove does nothing while scanning/placing (by design).
+Note: the glove firmware cancels draws below power 0.3 (`MIN_DRAW_POWER`); `BowController.minDrawToFire` is now 0.04.
+
+### Open bug: AR camera image rotated 90° (HUD and bow are fine)
+Seen on a partner's iPhone with Unity **6000.6.7f1** (project is 6000.6.4f1), Xcode 27.1, built with
+`Siege → Build iOS` code via batch mode. Screenshot: the room is turned 90° behind an upright HUD.
+- First build (old `main` 3d34ec8, from the Unity menu): looked right.
+- Every build after merging `6fa0840`: rotated. Also rotated when building **`6fa0840` alone, without any glove code**,
+  so it is not the glove code.
+- AROcclusionManager disabled (local test): still rotated. Scene transform overrides: all identity.
+- AR Foundation / ARKit are 6.6.2 in both; only small package bumps from the newer Unity patch.
+- Tried (unverified when this was written): `defaultScreenOrientation` 3 → 4 (auto-rotate, landscape only) and
+  `Assets/Siege/Scripts/AR/OrientationGuard.cs`, which re-applies the orientation 1 s after launch and logs
+  `[Orient] ... Screen.orientation=...` to the Xcode console. Revert either freely if they don't help.
+- Worth checking: does Mohammad's own 6000.6.4f1 build of `6fa0840` look right on his phone? If yes, the Unity patch
+  version is the difference.
+
 ## Housekeeping
 
 - **Unity `.meta` files:** `GloveUdp.cs` and `GloveLink.cs` were committed without `.meta` files (written outside
