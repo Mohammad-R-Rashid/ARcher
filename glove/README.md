@@ -10,7 +10,10 @@ to the phone. How the AR app receives them: `HANDOFF.md`.
 # once: brew install arduino-cli, the esp32 core (https://espressif.github.io/arduino-esp32/package_esp32_index.json)
 python3 arduino/flash_glove.py --install-libs --board s3 --player 1 --ssid "<hotspot>" --password "<password>"
 python3 arduino/flash_glove.py --board c3 --player 2 --ssid "<other phone's hotspot>" --password "<password>"
+# a glove can know several phones: repeat --ssid/--password; it joins whichever hotspot is on (strongest wins)
 ```
+- Power: a USB power bank in the glove's USB-C port (see "Power" below).
+- If a glove won't join, its USB serial output lists the hotspots it can see and the WiFi driver's refusal reason.
 - First flash of a board that still runs MicroPython: add `--erase`; an S3 may need **BOOT held while plugging in**,
   then **RESET** after the upload.
 - First boot: flex calibration (S3 LED solid = straight, blinking = bend; prompts also arrive as `log` messages).
@@ -143,13 +146,12 @@ Wiring on the XIAO ESP32-S3 (same D-labels on the C3, different GPIOs):
 - Long breadboards often split their power rails in the middle: check continuity.
 Recalibrate the flex (`Recalibrate flex`) and recenter after moving to the XIAO: its ADC reads differently from the Pico.
 
-### Battery (LiPo straight onto the XIAO, no booster)
-- Solder the LiPo to the **BAT+ / BAT− pads on the XIAO ESP32-S3's underside**. The board has a built-in charger
-  (charges over its USB-C) and makes 3.3 V for itself, the flex and the IMU from the battery.
-- **Not** to the breadboard rails: a LiPo is 3.3–4.2 V. On the 3V3 pin that exceeds the ESP32 and IMU limit (3.6 V);
-  on the 5V pin it sags as the battery drains and back-feeds when USB is plugged in.
-- **Check polarity before connecting**: many LiPos have red/black swapped in the plug. Red must reach BAT+.
-- The PowerBoost 500C isn't needed (it would only add an on/off switch and a low-battery light).
+### Power: a USB power bank
+What works: **a portable USB charger (power bank) into the glove's USB-C port**, the same power as a laptop's USB.
+Tried on 2026-10-25 and did not keep the glove running: a LiPo on the XIAO's 5V pin (it never finished joining
+WiFi; WiFi draws ~300 mA bursts and a 3.7-4.2 V cell leaves the regulator no headroom), and a LiPo through an Adafruit
+PowerBoost 500C (not resolved; check its unsoldered header pins first if you try again). Never connect a battery to
+the 5V/3V3 pins while USB is plugged in.
 
 ## Protocol (JSON, one message per line/datagram)
 

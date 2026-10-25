@@ -8,8 +8,9 @@ and the glove sends every event straight to the phone. No laptop, no server, no 
   Samsung: Mobile Hotspot, band **2.4 GHz**). The glove can't see 5 GHz.
 - Each glove is flashed with its phone's hotspot name and password:
   `python3 arduino/flash_glove.py --board s3 --player 1 --ssid "<hotspot name>" --password "<password>"`
-- Power the glove: it joins within a few seconds and starts sending. (iPhone: keep the Personal Hotspot
-  screen open while the glove joins, or the hotspot hides itself.)
+- Power the glove from a **USB power bank** into its USB-C port. It joins within a few seconds and starts
+  sending. (iPhone: keep the Personal Hotspot screen open while the glove joins, and the iPhone must not be
+  joined to any WiFi network itself, or its hotspot stops letting devices in.)
 
 ## 2. Receive events: listen on UDP port 9000
 The glove sends each event as **one UDP datagram** containing **one JSON object** to the phone (the

@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiUdp.h>
+#include <WiFiMulti.h>
 #include <ESPmDNS.h>
 #include <Wire.h>
 #include <Preferences.h>
@@ -152,29 +153,35 @@ void linkBegin() {
   WiFi.mode(WIFI_STA);
   WiFi.setHostname(PLAYER == 1 ? "glove-p1" : "glove-p2");
   WiFi.setAutoReconnect(true);        // rejoins by itself if the hotspot drops
+  WiFi.onEvent([](WiFiEvent_t e, WiFiEventInfo_t info) {   // say why a join failed
+    if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+      Serial.printf("  WiFi: dropped/refused, reason %d (2/202 auth, 15/204 handshake = password?, 201 not found)\n",
+                    (int)info.wifi_sta_disconnected.reason);
+  });
+  static WiFiMulti multi;             // joins whichever known hotspot is on (strongest first)
+  static const struct { const char* ssid; const char* pass; } NETWORKS[] = WIFI_NETWORKS;
+  for (auto& n : NETWORKS) multi.addAP(n.ssid, strlen(n.pass) ? n.pass : nullptr);
   while (true) {                      // the hotspot may come up after us: keep trying
-    Serial.printf("Connecting to WiFi '%s'...\n", WIFI_SSID);
-    if (strlen(WIFI_PASS)) WiFi.begin(WIFI_SSID, WIFI_PASS);
-    else WiFi.begin(WIFI_SSID);
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 30000) {
-      setLed((millis() / 500) % 2);   // slow blink = looking for the phone's hotspot
-      delay(100);
-    }
-    if (WiFi.status() == WL_CONNECTED) break;
-    Serial.printf("No WiFi yet (status %d). Scanning...\n", (int)WiFi.status());
+    Serial.printf("Looking for %u known hotspot(s)...\n", (unsigned)(sizeof(NETWORKS) / sizeof(NETWORKS[0])));
+    setLed(true);                     // LED on while searching (blinks between attempts)
+    if (multi.run(15000) == WL_CONNECTED) break;
+    setLed(false);
     WiFi.disconnect();                // a scan fails while a join attempt is still running
     delay(300);
     int n = WiFi.scanNetworks();
-    bool seen = false;
+    Serial.printf("No known hotspot joined (status %d). %d networks visible:\n", (int)WiFi.status(), n);
     for (int i = 0; i < n; i++) {
-      bool target = WiFi.SSID(i) == WIFI_SSID;
-      seen |= target;
-      if (target || i < 6)            // results come strongest first
-        Serial.printf("  %s'%s' %d dBm, channel %d, security %d\n", target ? ">> " : "", WiFi.SSID(i).c_str(),
+      bool known = false;
+      for (auto& k : NETWORKS) known |= WiFi.SSID(i) == k.ssid;
+      if (known || i < 5)             // results come strongest first
+        Serial.printf("  %s'%s' %d dBm, channel %d, security %d\n", known ? ">> known: " : "", WiFi.SSID(i).c_str(),
                       (int)WiFi.RSSI(i), (int)WiFi.channel(i), (int)WiFi.encryptionType(i));
     }
-    if (!seen) Serial.printf("  '%s' NOT among %d networks (hotspot on? Personal Hotspot screen open? Maximize Compatibility?)\n", WIFI_SSID, n);
+    for (auto& k : NETWORKS) {
+      bool seen = false;
+      for (int i = 0; i < n; i++) seen |= WiFi.SSID(i) == k.ssid;
+      if (!seen) Serial.printf("  '%s' not visible (hotspot on? 2.4 GHz? iPhone: not joined to any WiFi itself)\n", k.ssid);
+    }
     WiFi.scanDelete();
     delay(200);
   }
@@ -183,7 +190,7 @@ void linkBegin() {
   phoneIp = WiFi.gatewayIP();
   MDNS.begin(PLAYER == 1 ? "glove-p1" : "glove-p2");
   MDNS.addService("http", "tcp", 80);
-  Serial.printf("WiFi connected: glove IP %s, sending to phone %s port %d\n",
+  Serial.printf("WiFi connected to '%s': glove IP %s, sending to phone %s port %d\n", WiFi.SSID().c_str(),
                 WiFi.localIP().toString().c_str(), phoneIp.toString().c_str(), UDP_PORT);
 #endif
   startWeb();

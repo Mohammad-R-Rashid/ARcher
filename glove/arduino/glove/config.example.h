@@ -8,5 +8,6 @@
 #define WIFI_SSID "your-phone-hotspot"
 #define WIFI_CHANNEL 1             // only used with WIFI_HOST 1
 #define WIFI_PASS "hotspot-password"
+#define WIFI_NETWORKS {{"your-phone-hotspot", "hotspot-password"}}   // hotspots to try, strongest wins
 #define HUB_IP "192.168.4.1"
 #define UDP_PORT 9000

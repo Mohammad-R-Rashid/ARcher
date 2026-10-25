@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Compile and upload the Arduino glove firmware (run on the laptop, glove on USB-C).
 
-  python3 arduino/flash_glove.py --board s3 --player 1 --ssid "Bilal_iPhone" --password "..."
+  python3 arduino/flash_glove.py --board s3 --player 1 --ssid "Bilal_iPhone" --password "..." [--ssid B --password ...]
   python3 arduino/flash_glove.py --board c3 --player 2 --ssid "<partner's hotspot>" --password "..."
   python3 arduino/flash_glove.py --board s3 --player 1 --own-network   # glove hosts "BowDuel-P1" itself
   python3 arduino/flash_glove.py --sketch ap_test --board c3           # the bare WiFi test
@@ -15,6 +15,7 @@ It also serves the test page at http://<glove IP> for browser testing.
 Needs arduino-cli with the esp32 core and the libraries listed in LIBS (see --install-libs).
 """
 import argparse
+import json
 import glob
 import os
 import subprocess
@@ -50,6 +51,8 @@ def write_config(args):
         fh.write('#define WIFI_SSID "%s"\n' % args.ssid)
         fh.write("#define WIFI_CHANNEL %d\n" % (1 if args.player == 1 else 11))
         fh.write('#define WIFI_PASS "%s"\n' % ("" if args.open else args.password))
+        nets = ", ".join("{%s, %s}" % (json.dumps(s), json.dumps(p)) for s, p in args.networks)
+        fh.write("#define WIFI_NETWORKS {%s}   // hotspots to try (joiner)\n" % nets)
         fh.write('#define HUB_IP "192.168.4.1"\n#define UDP_PORT 9000\n')
 
 
@@ -84,8 +87,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--board", choices=sorted(FQBN), required=True)
     ap.add_argument("--player", type=int, choices=[1, 2], default=1)
-    ap.add_argument("--ssid", help="the phone's Personal Hotspot name (exactly as the phone shows it)")
-    ap.add_argument("--password", help="the hotspot password")
+    ap.add_argument("--ssid", action="append", help="a phone hotspot name, exactly as the phone shows it (repeatable)")
+    ap.add_argument("--password", action="append", help="its password (one per --ssid, same order)")
     ap.add_argument("--own-network", action="store_true", help="glove creates WiFi BowDuel-P<player> (password bowduel26)")
     ap.add_argument("--open", action="store_true", help="no WiFi password")
     ap.add_argument("--sketch", default="glove", choices=["glove", "ap_test"])
@@ -94,12 +97,16 @@ def main():
     ap.add_argument("--compile-only", action="store_true")
     ap.add_argument("--install-libs", action="store_true", help="install the Arduino libraries first")
     args = ap.parse_args()
+    ssids, passwords = args.ssid or [], args.password or []
     if args.own_network:
-        args.ssid = args.ssid or "BowDuel-P%d" % args.player
-        args.password = args.password or "bowduel26"
-    elif args.sketch == "glove" and not args.ssid:
-        sys.exit("Give the phone's hotspot: --ssid NAME --password PASS (or --own-network)")
-    args.password = args.password or ""
+        ssids = ssids or ["BowDuel-P%d" % args.player]
+        passwords = passwords or ["bowduel26"]
+    elif args.sketch == "glove" and not ssids:
+        sys.exit("Give the phone's hotspot: --ssid NAME --password PASS (repeat both for more phones), or --own-network")
+    if len(passwords) < len(ssids) and not args.open:
+        sys.exit("Give one --password per --ssid")
+    args.networks = list(zip(ssids, (passwords + [""] * len(ssids)) if args.open else passwords)) or [("", "")]
+    args.ssid, args.password = args.networks[0]
     if args.sketch == "glove" and not args.open and len(args.password) < 8:
         sys.exit("WiFi passwords need at least 8 characters (or --open)")
 
