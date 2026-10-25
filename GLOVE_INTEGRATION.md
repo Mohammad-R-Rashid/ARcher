@@ -44,6 +44,35 @@ glove (Arduino firmware)                         phone (Siege AR, Unity)
 | UDP reliability in the firmware: `shot` numbers, 3× `release`/`cancel`/replies, command `id`s run once, `zero` always replies (`ok:false` on failure) | `glove.ino`, `HANDOFF.md` | `3e1222f` | Compiles for C3 and S3 (ESP32 core 3.3.8, no warnings). **Not yet run on hardware.** |
 | **Component 1: phone-side UDP link.** `GloveUdp` (plain C#) + `GloveLink` (Unity wrapper). Listens on 9000, learns the glove's address, drops repeats (also after a glove reboot), retries commands until answered (`cmd_timeout` after 3 tries), pings on first contact, recreates the socket after errors and app suspension. | `Assets/Siege/Scripts/Glove/` | `8357dda` | 14 dotnet tests vs a fake glove over real UDP (`dotnet test Tools/glove-tests`). **Not yet compiled in Unity or run on a phone.** |
 
+## Is the glove ↔ phone link working end to end? Not yet proven
+
+Both ends have the code, but the real glove and the Unity app have never run together, and the game doesn't use
+the link yet.
+
+| Piece | Status |
+|---|---|
+| Glove sends UDP to the phone | ✅ Firmware written. The basic path was proven in the hardware test. The newer reliability changes (`3e1222f`) compile but haven't been flashed or run. |
+| Phone receives UDP (`GloveUdp`) | ✅ Code written and tested against a **fake** glove on a PC. Never compiled in Unity or run on an iPhone. |
+| Something in the app runs it | ❌ Nothing creates `GloveLink` yet (component 6). In a build today the phone isn't listening. |
+| The game reacts to glove data | ❌ Nothing reads the messages yet (components 2–3). Data would arrive, but nothing would happen in the game. |
+| iOS permission key | ❌ The Info.plist entry isn't added yet (component 8). Receiving may work without it, but the phone's replies (ping, recenter) may be blocked until iOS asks for local-network access. |
+
+### How to prove it (no game code needed)
+1. Flash the glove with the current `glove.ino` (`python3 glove/arduino/flash_glove.py ...`, see `glove/README.md`).
+2. In Unity, open `Assets/Siege/Scenes/Main.unity`, add the **GloveLink** component to any GameObject, and tick
+   **Log Messages**. Commit the `.meta` files Unity generates.
+3. Build to the iPhone, turn on its hotspot (2.4 GHz / Maximize Compatibility), power the glove, and watch the
+   Xcode console. Expected:
+   - `[Glove] listening for the glove on UDP 9000`
+   - `[Glove] glove at 172.20.10.x:9000`
+   - a stream of `hb` messages, and `draw_start` / `draw` / `release` when you make a fist and open it
+     (each `release` once, even though the glove sends it 3×)
+   - a `pong` reply, which proves phone → glove too (iOS may show the local-network prompt here)
+
+The Unity **editor** on a PC can't run this test with the real glove, because the glove only sends to its
+hotspot's router (the phone). The proposed "reply to the last sender" firmware change below fixes that. Do this
+check before building components 2–3 on top of the link.
+
 ## Still to do (MVP)
 
 Build and verify **one at a time**. Numbers match the original plan.
