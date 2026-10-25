@@ -39,7 +39,9 @@ const int PIN_LED = -1, LED_ON = LOW;                 // no user LED
 
 // ======================= tuning (same as glove.py) =======================
 const uint32_t FULL_DRAW_MS = 1200;   // fist held this long = full power
-const uint32_t MIN_DRAW_MS = 150;     // shorter fists are treated as noise (cancel)
+// Weaker draws are cancelled, not released. In power (not ms) so it follows FULL_DRAW_MS, and it is
+// the same number as the AR app's BowController.minDrawToFire: below it the app would drop the shot.
+const float MIN_DRAW_POWER = 0.30f;
 const uint32_t COOLDOWN_MS = 400;     // min time between shots
 const float CLOSE_AT = 0.60f;         // bend (0=open, 1=fist) that counts as "fist"
 const float OPEN_AT = 0.40f;          // bend that counts as "open" again (hysteresis)
@@ -56,14 +58,20 @@ void setLed(bool on) {
 }
 
 // ---------------- commands for this glove ----------------
+// A command may carry an "id" (the phone app's retry key); -1 = none (plain text, test page).
 String cmdQueue[8];
+long cmdIdQueue[8];
 int cmdHead = 0, cmdCount = 0;
-void pushCmd(const String& c) {
-  if (cmdCount < 8) cmdQueue[(cmdHead + cmdCount++) % 8] = c;
+void pushCmd(const String& c, long id = -1) {
+  if (cmdCount >= 8) return;
+  int slot = (cmdHead + cmdCount++) % 8;
+  cmdQueue[slot] = c;
+  cmdIdQueue[slot] = id;
 }
-bool popCmd(String& c) {
+bool popCmd(String& c, long& id) {
   if (!cmdCount) return false;
   c = cmdQueue[cmdHead];
+  id = cmdIdQueue[cmdHead];
   cmdHead = (cmdHead + 1) % 8;
   cmdCount--;
   return true;
@@ -81,8 +89,7 @@ uint16_t glovePort[3] = {0, 0, 0};    // WIFI_HOST 1: gloves that joined this gl
 int lastStations = -1;
 size_t lastPages = 0;
 
-void linkSend(const char* json) {
-  ws.textAll(json);
+void udpToPhone(const char* json) {
 #if !WIFI_HOST
   if (WiFi.status() == WL_CONNECTED) {
     udp.beginPacket(phoneIp, UDP_PORT);
@@ -90,6 +97,43 @@ void linkSend(const char* json) {
     udp.endPacket();
   }
 #endif
+}
+
+void linkSend(const char* json) {
+  ws.textAll(json);
+  udpToPhone(json);
+}
+
+// UDP can drop a datagram. One-off events the phone must not miss (release, cancel, command replies)
+// go to the phone UDP_COPIES times, REPEAT_GAP_MS apart; each carries an id ("shot" / "id") so the app
+// acts on the first copy and ignores the rest. Test pages are on TCP (WebSocket): they get one copy.
+const int UDP_COPIES = 3;
+const uint32_t REPEAT_GAP_MS = 20;
+struct Repeat { char text[320]; uint8_t left; uint32_t due; };
+Repeat repeats[4];
+long lastCmdId = -1;                  // the last command id accepted from the phone...
+char lastReply[320] = "";             // ...and the reply it produced ("" while it's still running)
+
+void linkSendCritical(const char* json) {
+  linkSend(json);
+  int slot = 0;                       // a free slot, else the one closest to done
+  for (int i = 0; i < 4; i++) {
+    if (!repeats[i].left) { slot = i; break; }
+    if (repeats[i].left < repeats[slot].left) slot = i;
+  }
+  strlcpy(repeats[slot].text, json, sizeof repeats[slot].text);
+  repeats[slot].left = UDP_COPIES - 1;
+  repeats[slot].due = millis() + REPEAT_GAP_MS;
+}
+
+void serviceRepeats() {               // from linkService(), so copies go out during calibration waits too
+  uint32_t now = millis();
+  for (int i = 0; i < 4; i++) {
+    if (!repeats[i].left || (int32_t)(now - repeats[i].due) < 0) continue;
+    udpToPhone(repeats[i].text);
+    repeats[i].left--;
+    repeats[i].due = now + REPEAT_GAP_MS;
+  }
 }
 
 void note(const char* text) {         // status for the page's log panel (and the phone app)
@@ -122,7 +166,17 @@ void handleJson(const char* text) {
   const char* cmd = doc["cmd"] | "";
   bool anyone = doc["p"].isNull();
   int p = doc["p"] | 0;
-  if (anyone || p == PLAYER) pushCmd(cmd);
+  long id = doc["id"] | -1L;
+  if (anyone || p == PLAYER) {
+    if (id >= 0 && id == lastCmdId) {
+      // The phone is retrying: it never got our reply. Don't redo a 4 s recenter; resend the reply
+      // (or nothing yet: the command is still running and its reply will come).
+      if (lastReply[0]) linkSendCritical(lastReply);
+    } else {
+      if (id >= 0) { lastCmdId = id; lastReply[0] = 0; }
+      pushCmd(cmd, id);
+    }
+  }
   for (int i = 1; i <= 2; i++) {
     if (i == PLAYER || !glovePort[i] || (!anyone && i != p)) continue;
     udp.beginPacket(gloveIp[i], glovePort[i]);
@@ -197,6 +251,7 @@ void linkBegin() {
 }
 
 void linkService() {
+  serviceRepeats();
   NetMsg m;
   while (xQueueReceive(pageQueue, &m, 0) == pdTRUE) handleJson(m.text);
   while (udp.parsePacket() > 0) {
@@ -250,7 +305,35 @@ void linkService() {
 }
 
 // ---------------- messages ----------------
+void formatMsg(char* msg, size_t n, const char* type, const char* fmt, va_list ap) {
+  char extra[240] = "";
+  if (fmt) vsnprintf(extra, sizeof extra, fmt, ap);
+  snprintf(msg, n, "{\"t\":\"%s\",\"p\":%d,\"src\":\"wifi\"%s%s}", type, PLAYER, extra[0] ? "," : "", extra);
+}
+
 void emit(const char* type, const char* fmt = nullptr, ...) {
+  char msg[320];
+  va_list ap;
+  va_start(ap, fmt);
+  formatMsg(msg, sizeof msg, type, fmt, ap);
+  va_end(ap);
+  linkSend(msg);
+}
+
+void emitCritical(const char* type, const char* fmt = nullptr, ...) {   // repeated over UDP, see linkSendCritical
+  char msg[320];
+  va_list ap;
+  va_start(ap, fmt);
+  formatMsg(msg, sizeof msg, type, fmt, ap);
+  va_end(ap);
+  linkSendCritical(msg);
+}
+
+// The reply that ends a command (zero, calib, pong). Repeated over UDP, tagged with the command's id
+// and kept so a retry of that id gets the same reply again instead of re-running the command.
+long replyId = -1;                    // id of the command being handled (-1 = none)
+
+void emitReply(const char* type, const char* fmt = nullptr, ...) {
   char extra[240] = "";
   if (fmt) {
     va_list ap;
@@ -259,8 +342,10 @@ void emit(const char* type, const char* fmt = nullptr, ...) {
     va_end(ap);
   }
   char msg[320];
-  snprintf(msg, sizeof msg, "{\"t\":\"%s\",\"p\":%d,\"src\":\"wifi\"%s%s}", type, PLAYER, extra[0] ? "," : "", extra);
-  linkSend(msg);
+  if (replyId >= 0) snprintf(msg, sizeof msg, "{\"t\":\"%s\",\"p\":%d,\"src\":\"wifi\",\"id\":%ld%s%s}", type, PLAYER, replyId, extra[0] ? "," : "", extra);
+  else snprintf(msg, sizeof msg, "{\"t\":\"%s\",\"p\":%d,\"src\":\"wifi\"%s%s}", type, PLAYER, extra[0] ? "," : "", extra);
+  linkSendCritical(msg);
+  if (replyId >= 0 && replyId == lastCmdId) strlcpy(lastReply, msg, sizeof lastReply);
 }
 
 void logMsg(const char* text) {
@@ -484,7 +569,7 @@ void calibrateFlex() {
       calib.fist = f;
       calib.valid = true;
       saveCalib();
-      emit("calib", "\"open\":%d,\"fist\":%d", (int)o, (int)f);
+      emitReply("calib", "\"open\":%d,\"fist\":%d", (int)o, (int)f);
       return;
     }
     char t[140];
@@ -493,8 +578,10 @@ void calibrateFlex() {
   }
 }
 
-void zeroTilt() {   // hold the aiming pose still: it becomes pitch 0, roll 0
-  if (!imuOk) { logMsg("Zero aim: no IMU"); return; }
+// Hold the aiming pose still: it becomes pitch 0, roll 0. Always ends with a "zero" reply
+// ("ok":false if it couldn't), so the phone app knows the recenter is over either way.
+void zeroTilt() {
+  if (!imuOk) { logMsg("Zero aim: no IMU"); emitReply("zero", "\"ok\":false"); return; }
   logMsg("ZERO AIM: hold your aiming pose still (LED on)");
   busyState = "zeroing";
   setLed(true);
@@ -510,31 +597,42 @@ void zeroTilt() {   // hold the aiming pose still: it becomes pitch 0, roll 0
     busyWait(LOOP_MS);
   }
   setLed(false);
-  if (!n) { logMsg("Zero aim failed: IMU not responding"); return; }
+  if (!n) { logMsg("Zero aim failed: IMU not responding"); emitReply("zero", "\"ok\":false"); return; }
   calib.pitch0 = ps / n;
   calib.roll0 = rs / n;
   histCount = 0;
   saveCalib();
-  emit("zero", "\"pitch0\":%.2f,\"roll0\":%.2f", calib.pitch0, calib.roll0);
+  emitReply("zero", "\"ok\":true,\"pitch0\":%.2f,\"roll0\":%.2f", calib.pitch0, calib.roll0);
   char t[80];
   snprintf(t, sizeof t, "Aim zeroed (offset pitch %.1f, roll %.1f)", calib.pitch0, calib.roll0);
   logMsg(t);
 }
 
-void handleCmd(const String& c) {
+void handleCmd(const String& c, long id) {
+  replyId = id;
   if (c == "cal") calibrateFlex();
   else if (c == "zero") zeroTilt();
-  else if (c == "ping") emit("pong");
-  if (c == "cal" || c == "zero") {   // drop button presses that queued up while we were busy
+  else if (c == "ping") emitReply("pong");
+  replyId = -1;
+  if (c == "cal" || c == "zero") {
+    // Drop button presses that queued up while we were busy. Commands with an id are the phone app's
+    // deliberate requests: keep those (dropping one would leave its retries unanswered forever).
     linkService();
-    String drop;
-    while (popCmd(drop)) {}
+    String q;
+    long qid;
+    int n = cmdCount;
+    for (int i = 0; i < n && popCmd(q, qid); i++)
+      if (qid >= 0) pushCmd(q, qid);
   }
 }
 
 // ======================= main =======================
 enum { HAND_OPEN, HAND_DRAWING } handState = HAND_OPEN;
 uint32_t drawStart = 0, lastRelease = 0, lastDrawMsg = 0, lastHb = 0;
+// Every draw gets a number, sent with all its events: the phone ignores repeated copies of a release,
+// and a draw/release with a new number means the previous draw is over even if its release got lost.
+// Restarts at 1 when the glove reboots (the app treats any change of number as a new shot).
+uint32_t shotId = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -564,29 +662,30 @@ void loop() {
     if (b >= CLOSE_AT && now - lastRelease >= COOLDOWN_MS) {
       handState = HAND_DRAWING;
       drawStart = lastDrawMsg = now;
-      emit("draw_start");
+      shotId++;
+      emit("draw_start", "\"shot\":%lu", (unsigned long)shotId);
     }
   } else {
     uint32_t held = now - drawStart;
     float power = std::min(1.0f, held / (float)FULL_DRAW_MS);
     if (b <= OPEN_AT) {
       handState = HAND_OPEN;
-      if (held >= MIN_DRAW_MS) {
+      if (power >= MIN_DRAW_POWER) {
         float p, r;
         bool ok = tiltAgo(RELEASE_LOOKBACK_MS, p, r);
         char ps[12], rs[12];
-        emit("release", "\"power\":%.2f,\"held_ms\":%lu,\"pitch\":%s,\"roll\":%s", power, (unsigned long)held,
-             angle(ps, ok, p), angle(rs, ok, r));
+        emitCritical("release", "\"shot\":%lu,\"power\":%.2f,\"held_ms\":%lu,\"pitch\":%s,\"roll\":%s", (unsigned long)shotId,
+                     power, (unsigned long)held, angle(ps, ok, p), angle(rs, ok, r));
         lastRelease = now;
       } else {
-        emit("cancel");
+        emitCritical("cancel", "\"shot\":%lu", (unsigned long)shotId);
       }
     } else if (now - lastDrawMsg >= DRAW_MSG_MS) {
       // same lookback as release, so the app's arc preview shows exactly the shot it would get
       float p, r;
       bool ok = tiltAgo(RELEASE_LOOKBACK_MS, p, r);
       char ps[12];
-      emit("draw", "\"power\":%.2f,\"pitch\":%s", power, angle(ps, ok, p));
+      emit("draw", "\"shot\":%lu,\"power\":%.2f,\"pitch\":%s", (unsigned long)shotId, power, angle(ps, ok, p));
       lastDrawMsg = now;
     }
   }
@@ -595,13 +694,15 @@ void loop() {
     float p, r;
     bool ok = tiltAgo(0, p, r);
     char ps[12], rs[12];
-    emit("hb", "\"bend\":%.2f,\"state\":\"%s\",\"pitch\":%s,\"roll\":%s,\"imu\":%s", b,
-         handState == HAND_OPEN ? "open" : "drawing", angle(ps, ok, p), angle(rs, ok, r), imuOk ? "true" : "false");
+    // "shot" = the latest draw: "open" with the shot the app thinks is still drawn means its release was lost
+    emit("hb", "\"bend\":%.2f,\"state\":\"%s\",\"shot\":%lu,\"pitch\":%s,\"roll\":%s,\"imu\":%s", b,
+         handState == HAND_OPEN ? "open" : "drawing", (unsigned long)shotId, angle(ps, ok, p), angle(rs, ok, r), imuOk ? "true" : "false");
     lastHb = now;
   }
 
   linkService();
   String c;
-  if (popCmd(c)) handleCmd(c);
+  long id;
+  if (popCmd(c, id)) handleCmd(c, id);
   delay(LOOP_MS);
 }

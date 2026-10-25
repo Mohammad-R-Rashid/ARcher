@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests for the glove code that has no Unity dependency, compiled straight from Assets/ (no copies):
+      dotnet test Tools/glove-tests
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>   <!-- what Unity 6 compiles -->
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="../../Assets/Siege/Scripts/Glove/GloveUdp.cs" Link="Glove/GloveUdp.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Unity's com.unity.nuget.newtonsoft-json 3.2.1 is Newtonsoft.Json 13.0.2 -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.6.0" />
+  </ItemGroup>
+
+</Project>

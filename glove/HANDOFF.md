@@ -18,17 +18,27 @@ hotspot's router address) on port **9000**. Listen on that port; no address need
 
 | `t` | Fields | Do this |
 |---|---|---|
-| `release` | `power` 0–1, `pitch`, `roll` (deg, may be null), `held_ms` | **Fire the arrow.** Power = arrow speed |
-| `draw_start` | | Start the bow-draw animation |
-| `draw` | `power` 0–1, `pitch` (deg, may be null), every 50 ms | Animate the string; preview the arc (`pitch` uses the same 100 ms lookback as `release`, so the preview matches the shot) |
-| `cancel` | | Fist was too short: stop the draw animation, no arrow |
-| `hb` | `bend`, `state`, `pitch`, `roll`, `imu` (4×/s) | Glove is alive (show "connected") |
-| `zero` | `pitch0`, `roll0` | Recenter finished |
-| `calib` | `open`, `fist` (mV) | Flex calibration finished |
+| `release` | `shot`, `power` 0–1, `pitch`, `roll` (deg, may be null), `held_ms` | **Fire the arrow.** Power = arrow speed. **Sent 3×** (see below) |
+| `draw_start` | `shot` | Start the bow-draw animation |
+| `draw` | `shot`, `power` 0–1, `pitch` (deg, may be null), every 50 ms | Animate the string; preview the arc (`pitch` uses the same 100 ms lookback as `release`, so the preview matches the shot) |
+| `cancel` | `shot` | Draw too weak (power < 0.3): stop the draw animation, no arrow. **Sent 3×** |
+| `hb` | `bend`, `state`, `shot`, `pitch`, `roll`, `imu` (4×/s) | Glove is alive (show "connected") |
+| `zero` | `ok`, `pitch0`, `roll0`, `id` | Recenter finished (`ok:false` = it couldn't, e.g. no IMU). **Sent 3×** |
+| `calib` | `open`, `fist` (mV), `id` | Flex calibration finished. **Sent 3×** |
+| `pong` | `id` | Answer to `ping` |
 | `log` | `msg` | Status text. Show `CALIBRATE: ...` / `ZERO AIM: ...` messages as prompts to the player |
 
 Every message also has `p` (player 1 or 2). Aim: **left/right comes from the phone** (where the camera
 points); up/down from the glove's `pitch` in `release` if it isn't null, else the phone's tilt.
+
+### Lost packets (UDP)
+UDP can drop a datagram. `draw` (every 50 ms) and `hb` (4×/s) don't matter: the next one replaces it.
+The one-off messages do, so:
+- **`release`, `cancel`, `zero`, `calib`, `pong` arrive 3 times**, ~20 ms apart. Act on the first copy, ignore
+  copies with the same key: `shot` for release/cancel, `id` for command replies.
+- **`shot`** numbers each draw (starts at 1 after the glove boots; treat any *change* as a new draw). If all
+  3 copies of a release are lost, the next `draw_start`/`draw` with a different `shot`, or an `hb` with
+  `state:"open"` and the same `shot`, means that draw is over: drop it (no arrow) so the bow doesn't stay drawn.
 
 ## 3. Send commands: reply to the glove, UDP port 9000
 Send to **the address the glove's datagrams came from**, port 9000. Plain text is enough:
@@ -39,7 +49,13 @@ Send to **the address the glove's datagrams came from**, port 9000. Plain text i
 | `cal` | Recalibrate the flex sensor (straight, then bend; prompts arrive as `log` messages) |
 | `ping` | Glove answers `pong` |
 
-(`{"t":"cmd","cmd":"zero"}` works too.)
+**The app should send commands as JSON with an `id`**, and resend until the reply comes:
+`{"t":"cmd","cmd":"zero","id":7}` → the glove's reply (`zero` / `calib` / `pong`) carries `"id":7`.
+- A command can get lost too: if there's no reply, send the **same** command with the **same** `id` again
+  (every ~1 s for `ping`; `zero` takes ~4 s, so wait ~5 s before the first retry).
+- The glove runs each `id` once. A repeat while it's still running is ignored; a repeat after it finished
+  gets the same reply again (it does **not** recenter twice). Use a new `id` for each new command.
+- Plain text (`zero`) and JSON without `id` still work (the test page uses them), but get no retry protection.
 
 **Round start:** show "Hold your bow level and still" with 3…2…1 over **4.5 s**, send `zero` at the start,
 ignore `release` until GO.

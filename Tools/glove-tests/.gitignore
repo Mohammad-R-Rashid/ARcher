@@ -1,0 +1,4 @@
+bin/
+obj/
+# the repo root ignores *.csproj (Unity generates its own); this one is hand-written
+!*.csproj

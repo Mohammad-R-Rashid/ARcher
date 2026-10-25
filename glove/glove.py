@@ -26,7 +26,8 @@ PINS = {   # led: (pin, value that turns it on); None = board has no user LED
 }[BOARD]
 
 FULL_DRAW_MS = 1200  # fist held this long = full power
-MIN_DRAW_MS = 150    # shorter fists are treated as noise (cancel)
+MIN_DRAW_POWER = 0.30  # weaker draws cancel; power (not ms) so it follows FULL_DRAW_MS.
+                       # Same number as the AR app's BowController.minDrawToFire.
 COOLDOWN_MS = 400    # min time between shots
 CLOSE_AT = 0.60      # bend (0=open, 1=fist) that counts as "fist"
 OPEN_AT = 0.40       # bend that counts as "open" again (hysteresis)
@@ -696,7 +697,7 @@ def main():
             power = min(1.0, held / FULL_DRAW_MS)
             if b <= OPEN_AT:
                 state = "open"
-                if held >= MIN_DRAW_MS:
+                if power >= MIN_DRAW_POWER:
                     pitch, roll = tilt(RELEASE_LOOKBACK_MS)
                     send("release", power=round(power, 2), held_ms=held, pitch=pitch, roll=roll)
                     last_release = now
